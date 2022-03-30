@@ -1,6 +1,9 @@
-# This one has no flip in frequency for bi-directional rays
-# Modified to allow saving deltas to fits files 4/14/21
-# Polishing up for github
+# Last updated 12/27/2021 
+#    - Added calc_R method to faraday class object to calculate the stimulated emission rate, R, for a given solution.
+#    - Removed requirement to provide delta array to stokes method on call; now just uses attribute, self.deltas.
+#    - Removed requirement to provide beta value to stokes method on call; now calculates by comparing tau attribute
+#          to tau0 attribute.
+
 
 import numpy as np
 from astropy.io import fits
@@ -479,21 +482,11 @@ class faraday:
             self.deltas = lastdelta
             del deltas_new
         
-    def stokes(self, delta, beta, verbose=False ):
+    def stokes(self, verbose = False ):
         """
         Program that calculates the dimensionless stokes values from the input dimensionless 
         inversion equations, delta.
        
-        The main input for this function, delta, should be a numpy array with dimensions 
-        (T,NV+4k,3), where NV is the number of velocity bins and T is the number of tau bins. The 
-        0th axis specifies values across different tau at constant frequency for a single 
-        transition. The 1st axis specifies values across frequency at constant tau for a transition.
-        The three rows along the 0th axis should be for delta^- (delta[0]), delta^0 (delta[1]), and 
-        delta^+ (delta[2]).
-        
-        beta is a float that is multiplied by self.tau0 to determine the tau values that are
-        integrated over
-        
         verbose [default=False]: Whether to print out the values in a specified wavelength bin at
         several points in the calculation for checking. To print, set verbose to the index of the 
         wavelength bin (in the original delta array) desired for printout.
@@ -519,16 +512,19 @@ class faraday:
         
         
         
-        Returns an array with shape (T,NV+4k,4) of unitless Stokes values. Zeroth axis separates by
+        Returns an array with shape (T,NV+2k,4) of unitless Stokes values. Zeroth axis separates by
         optical depth, first axis separates by frequency, and second axis separates i, q, u, v.
         
         """
-    
+        
+        # Figures out beta value from tau and tau0 attributes
+        beta = float(self.tau[-1]) / float(self.tau0[-1])
+        
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
-        delta_m = delta[:,:,0]
-        delta_0 = delta[:,:,1]
-        delta_p = delta[:,:,2]
+        delta_m = self.deltas[:,:,0]
+        delta_0 = self.deltas[:,:,1]
+        delta_p = self.deltas[:,:,2]
         
         # Then separates out end stokes values
         i0 = self.iquv0[0]
@@ -849,6 +845,95 @@ class faraday:
         self.stoku = stoku
         self.stokv = stokv
     
+    def calc_R(self, Gamma = None, verbose = False, sep = False ):
+        """
+        Program that calculates the stimulated emission rate, R, at the end of the cloud from the 
+        input dimensionless inversion equations, delta.
+        
+        If the loss rate (Gamma, in inverse seconds) is not provided, only calculates the ratio of the
+        stimulated emission rate to the loss rate. If the loss rate, Gamma, is provided, will return
+        the stimulated emission rate, R, in inverse seconds.
+        
+        Optional Parameters:
+            
+            Gamma           Float or None [ default = None ]
+                                The loss rate in inverse seconds. If provided, will calculate and 
+                                return the stimulated emission rate, R. If set to None, will 
+                                calculate and return R/Gamma. 
+            verbose         Boolean True/False [ default = False ]
+                                Whether to print out progress during calculation.
+            sep             Boolean True/False [ default = False ]
+                                If set to True, will return stimulated emission rate values for each
+                                transition separately, in the order minus, zero, plus. If set to
+                                False, will return only one value with the three stimulated emission
+                                rate values summed.
+        
+        Other Object Attributes Used:
+            
+            self.theta      The angle between the magnetic field and line of sight in radians.
+            self.costheta   cos( self.theta )
+            self.sintheta   sin( self.theta )
+            self.phi        The sky-plane angle in radians.
+            self.costwophi  cos( 2 * self.phi )
+            self.sintwophi  sin( 2 * self.phi )
+            self.etap       The squared ratio of the + dipole moment to the 0th dipole moment.
+            self.etam       The squared ratio of the - dipole moment to the 0th dipole moment.
+            self.omegabar   The array of angular frequencies.
+            self.k          The number of frequency bins spanned by the Zeeman shift, delta omega
+            
+        Returns:
+            
+            outval          Float
+                                Either the stimulated emission rate, in inverse seconds, at the cloud
+                                end if Gamma was provided, or the ratio of R/Gamma, if Gamma was not
+                                provided.        
+        """
+        
+        # Figures out beta value from tau and tau0 attributes
+        beta = float(self.tau[-1]) / float(self.tau0[-1])
+        
+        # Simplifies name of attribute k
+        k = self.k
+        
+        # Calculates 1 + cos(theta)^2 for quick reference
+        cos2thetap1 = 1.0 + self.costheta**2
+        
+        # If Gamma wasn't provided, sets to 1.0 
+        if Gamma is None: 
+            Gamma = 1.0
+        
+        # Calculates the Stokes values for the currently loaded array
+        #    Stokes array shapes are (T,NV+2k)
+        self.stokes( verbose = False )
+        
+        # Calculates the stimulated emission rates for each 0th, -, and + transition, as arrays
+        #    varying with angular frequency bins at line end. Shape should be (NV,).
+        Rzero_n  = 2.0 * Gamma * self.sintheta * self.sintheta * ( self.stoki[ -1, k : -1*k ] \
+                   - self.stokq[ -1, -1*k : k ] * self.costwophi - self.stoku[ -1, k : -1*k ] * self.sintwophi )
+        Rplus_n  = Gamma * self.etap * ( cos2thetap1 * self.stoki[ -1, : -2*k ] - 2. * self.stokv[ -1, : -2*k ] * self.costheta \
+                   + ( self.costwophi * self.stokq[ -1, : -2*k ] + self.sintwophi * self.stoku[ -1, : -2*k ] ) * self.sintheta * self.sintheta )
+        Rminus_n = Gamma * self.etam * ( cos2thetap1 * self.stoki[ -1, 2*k : ]  + 2. * self.stokv[ -1, 2*k : ] * self.costheta \
+                   + ( self.costwophi * self.stokq[ -1, 2*k :  ] + self.sintwophi * self.stoku[ -1, 2*k :  ] ) * self.sintheta * self.sintheta )
+        
+        # Integrates each term along angular frequency bin using trap rule
+        domegabar = self.omegabar[1] - self.omegabar[0]
+        Rzero  = ( 0.5*Rzero_n[0]  + Rzero_n[1:-1].sum()  + 0.5*Rzero_n[-1]  ) * domegabar
+        Rplus  = ( 0.5*Rplus_n[0]  + Rplus_n[1:-1].sum()  + 0.5*Rplus_n[-1]  ) * domegabar
+        Rminus = ( 0.5*Rminus_n[0] + Rminus_n[1:-1].sum() + 0.5*Rminus_n[-1] ) * domegabar
+        
+        # If we're summing the three rates, sums
+        if not sep:
+            outval = Rminus + Rzero + Rplus
+        
+        # If returning separate values, sets outval to be tuple
+        else:
+            outval = ( Rminus, Rzero, Rplus )
+        
+        # Returns
+        return outval
+            
+
+    
     def readin(self, beta, ext='txt', updatepars = False): 
         """
         Program to read in files generated by iterative root finding in __init__ function.
@@ -973,7 +1058,8 @@ class faraday:
         self.dtau = self.tau[1] - self.tau[0]
         
         return np.dstack(( dminus, dzero, dplus ))
-        
+    
+    
         
     
     ### Functions for writing output ###
