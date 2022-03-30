@@ -1,2 +1,2 @@
-import pkg.prism as prism
-import pkg.utils as utils
+from pkg import prism
+from pkg import utils
