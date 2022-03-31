@@ -1,8 +1,15 @@
-# Last updated 12/27/2021 
-#    - Added calc_R method to faraday class object to calculate the stimulated emission rate, R, for a given solution.
-#    - Removed requirement to provide delta array to stokes method on call; now just uses attribute, self.deltas.
-#    - Removed requirement to provide beta value to stokes method on call; now calculates by comparing tau attribute
-#          to tau0 attribute.
+# Last updated 3/30/2021
+#    - Moved txt_to_fits to new utils.py file
+#    - Renamed faraday.beta attribute (array of initially provided beta values) to self.betas.
+#    - Added faraday.beta attribute with just the current working beta value corresponding to the deltas array.
+#    - Added faraday.update_beta method to easily set beta, tau, and dtau attributes when switching to a new beta value.
+#    - Updated faraday.run to use new update_beta method and associated self.beta value.
+#    - All faraday methods adjusted to use only self.beta attribute (except readin)
+#    - Added optional beta parameters to faraday methods gain_matrix, integ_gain, stokes_per_ray, and LDI_terms (i.e.
+#          those used for calculating intermediate results for user-provided deltas array, but not used by actual 
+#          solver). If set, will use update_beta method to set provided value as new beta for object; if not provided,
+#          will just use the pre-set attributes.
+#    - Changed write_deltas default ext from 'txt' -> 'fits'.
 
 
 import numpy as np
@@ -11,7 +18,7 @@ from scipy import optimize
 from scipy.optimize.nonlin import NoConvergence
 from math import cos, sin, exp, pi, factorial
 import os
-from glob import glob
+
 
 # saves original numpy print options 
 orig_print = np.get_printoptions()
@@ -267,9 +274,10 @@ class faraday:
         
         #### Saving pars for starting new solutions ####
         if isinstance( beta, int ) or isinstance( beta, float ):
-            self.beta = np.array([ beta ])
+            self.betas = np.array([ beta ])
         else:
-            self.beta    = beta
+            self.betas    = beta
+        self.beta = None
         self.ftol    = ftol
         
         
@@ -374,7 +382,7 @@ class faraday:
         check_out = np.array([])
         
         # Begins iteration across beta values for solving
-        for b in range( self.beta.size ):
+        for b in range( self.betas.size ):
             
             # If this is the first iteration, creates an initial guess array
             if b == 0:
@@ -389,18 +397,13 @@ class faraday:
                     if self.trend == 'auto' or self.trend == True:
                         lastdelta2 = self.lastdelta2.astype(np.longdouble)
             
-            # Determines appropriate multiplier
-            bval = self.beta[ b ]
+            # Sets beta, tau, and dtau attributes for current beta value
+            self.update_beta(  self.betas[ b ] )
             
-            # Sets tau array
-            self.tau = self.tau0 * bval
-        
-            # Determines the spacing in tau
-            self.dtau = self.tau[1] - self.tau[0]
             
             # Prints feedback if requested
             if self.verbose  == True:
-                print('FARADAY: Beginning iteration {0} with beta={1}...'.format(b, bval))
+                print('FARADAY: Beginning iteration {0} with beta={1}...'.format(b, self.beta ))
             
             # If the trend fitting is 'auto', calculates residual for both offsets if possible
             if self.trend == 'auto':
@@ -461,18 +464,18 @@ class faraday:
                 print(e)
                 
                 # Saves resulting deltas with write_deltas method and breaks
-                # self.write_deltas(bval, deltas_new, ext='fits', broken=True)
+                # self.write_deltas(self.beta, deltas_new, ext='fits', broken=True)
                 break
 
             
             # Prints feedback if requested
             if self.verbose == True:
-                print('FARADAY: Iteration {0} with beta={1} Complete.'.format(b, bval))
+                print('FARADAY: Iteration {0} with beta={1} Complete.'.format(b, self.beta))
                 print('FARADAY: Output data type', deltas_new.dtype)
                 print('FARADAY: Writing output to file...')
             
             # Saves resulting deltas with write_deltas method
-            self.write_deltas(bval, deltas_new, ext='fits')
+            self.write_deltas(self.beta, deltas_new, ext='fits')
             
             # New deltas become old for the next iteration
             if self.trend == True or self.trend == 'auto':
@@ -517,9 +520,6 @@ class faraday:
         
         """
         
-        # Figures out beta value from tau and tau0 attributes
-        beta = float(self.tau[-1]) / float(self.tau0[-1])
-        
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
         delta_m = self.deltas[:,:,0]
@@ -539,10 +539,6 @@ class faraday:
         
         # simplify k name
         k = self.k
-        
-        # Determines tau values and dtau for this calculation
-        tau = beta * self.tau0
-        dtau = tau[1] - tau[0]
         
         if verbose:
             # Sets appropriate print options
@@ -932,7 +928,22 @@ class faraday:
         # Returns
         return outval
             
-
+    def update_beta( self, beta ):
+        """
+        Updates beta value (i.e. the total optical depth of the cloud multiplied by tau0).
+        
+        Updates object attributes self.beta, self.tau, and self.dtau.
+        """
+        
+        # Saves new beta value as object attribute beta
+        self.beta = beta
+        
+        # Scales tau array appropriately
+        self.tau = self.tau0 * self.beta
+    
+        # Determines the spacing in tau
+        self.dtau = self.tau[1] - self.tau[0]
+            
     
     def readin(self, beta, ext='txt', updatepars = False): 
         """
@@ -1064,7 +1075,7 @@ class faraday:
     
     ### Functions for writing output ###
 
-    def write_deltas(self, beta, deltas, ext='txt', broken=False):
+    def write_deltas(self, deltas, ext='fits', broken=False):
         """
         Writes delta{-,0,+} to output fits or txt file, depending on requested extension. Used by run.
         """
@@ -1079,13 +1090,13 @@ class faraday:
         
             # Creates path for output for delta minus, 0, and plus
             if not broken:
-                outpath_minus = '{0}FaradayOut_beta{1}_dminus.{2}'.format(self.outpath, beta, ext )
-                outpath_zero  = '{0}FaradayOut_beta{1}_dzero.{2}'.format(self.outpath, beta, ext )
-                outpath_plus  = '{0}FaradayOut_beta{1}_dplus.{2}'.format(self.outpath, beta, ext )
+                outpath_minus = '{0}FaradayOut_beta{1}_dminus.{2}'.format(self.outpath, self.beta, ext )
+                outpath_zero  = '{0}FaradayOut_beta{1}_dzero.{2}'.format(self.outpath, self.beta, ext )
+                outpath_plus  = '{0}FaradayOut_beta{1}_dplus.{2}'.format(self.outpath, self.beta, ext )
             else:
-                outpath_minus = '{0}FaradayOut_beta{1}_dminus_BROKEN.{2}'.format(self.outpath, beta, ext )
-                outpath_zero  = '{0}FaradayOut_beta{1}_dzero_BROKEN.{2}'.format(self.outpath, beta, ext )
-                outpath_plus  = '{0}FaradayOut_beta{1}_dplus_BROKEN.{2}'.format(self.outpath, beta, ext )
+                outpath_minus = '{0}FaradayOut_beta{1}_dminus_BROKEN.{2}'.format(self.outpath, self.beta, ext )
+                outpath_zero  = '{0}FaradayOut_beta{1}_dzero_BROKEN.{2}'.format(self.outpath, self.beta, ext )
+                outpath_plus  = '{0}FaradayOut_beta{1}_dplus_BROKEN.{2}'.format(self.outpath, self.beta, ext )
             
             # Writes output to text file with numpy savetxt
             np.savetxt(outpath_minus,deltas[:,:,0],fmt='%.18f')
@@ -1105,9 +1116,9 @@ class faraday:
             
             # Creates single path for output for delta minus, 0, and plus
             if not broken:
-                outpath = '{0}FaradayOut_beta{1}.{2}'.format(self.outpath, beta, ext )
+                outpath = '{0}FaradayOut_beta{1}.{2}'.format(self.outpath, self.beta, ext )
             else:
-                outpath = '{0}FaradayOut_beta{1}_BROKEN.{2}'.format(self.outpath, beta, ext )
+                outpath = '{0}FaradayOut_beta{1}_BROKEN.{2}'.format(self.outpath, self.beta, ext )
             
             # Makes primary HDU with no data
             prime_hdu = fits.PrimaryHDU()
@@ -1200,7 +1211,7 @@ class faraday:
         desc.write(lin)
         
         # Line for maximum beta
-        lin = '  Beta = {0}\n'.format( self.beta )
+        lin = '  Beta = {0}\n'.format( self.betas )
         desc.write(lin)
         
         # Line for angles
@@ -1827,7 +1838,7 @@ class faraday:
         # Returns the residual
         return resid
     
-    def gain_matrix(self, delta ):
+    def gain_matrix(self, delta, beta = None ):
         """
         Program that calculates and returns the dimensionless gain matrix components.
        
@@ -1845,7 +1856,12 @@ class faraday:
        
 
         """
-                # First separates out the plus, 0, and minus components of delta. These arrays have shape 
+        
+        # If beta is provided along with delta array, sets
+        if beta is not None:
+            self.update_beta( beta )
+        
+        # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
         #print('Inversion initialized. Splitting delta -/0/+')
         delta_m = delta[:,:,0]
@@ -1919,7 +1935,7 @@ class faraday:
             # Returns array of gamma values
             return outstack1, outstack2
     
-    def integ_gain(self, delta):
+    def integ_gain(self, delta, beta = None):
         """
         Program that calculates and returns the integral of the dimensionless gain matrix 
         components, Gamma_Stokes.
@@ -1936,7 +1952,11 @@ class faraday:
        
 
         """
-        
+        # If beta is provided along with delta array, sets
+        if beta is not None:
+            self.update_beta( beta )
+            
+            
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
         delta_m = delta[:,:,0]
@@ -2103,7 +2123,7 @@ class faraday:
         else:
             return outstack1, outstack2
     
-    def stokes_per_ray(self, delta, beta, verbose=False ):
+    def stokes_per_ray(self, delta, beta = None, verbose=False ):
         """
         Program that calculates the dimensionless stokes values from the input dimensionless 
         inversion equations, delta.
@@ -2147,6 +2167,10 @@ class faraday:
         optical depth, first axis separates by frequency, and second axis separates i, q, u, v.
         
         """
+        
+        # If beta is provided along with delta array, sets
+        if beta is not None:
+            self.update_beta( beta )
     
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
@@ -2168,16 +2192,12 @@ class faraday:
         # simplify k name
         k = self.k
         
-        # Determines tau values and dtau for this calculation
-        tau = beta * self.tau0
-        dtau = tau[1] - tau[0]
-        
         if verbose:
             # Sets appropriate print options
             np.set_printoptions(precision=4, linewidth=180)
             print('STOKES TEST:')
-            print('    tau min:', tau[0], '   tau max:', tau[-1] )
-            print('    dtau: ', dtau )
+            print('    tau min:', self.tau[0], '   tau max:', self.tau[-1] )
+            print('    dtau: ', self.dtau )
         
         
         
@@ -2447,7 +2467,7 @@ class faraday:
             # After calculation, unpacks stokes
             return stokes1, stokes2
     
-    def LDI_terms(self, delta, beta, verbose=False ):
+    def LDI_terms(self, delta, beta = None, verbose=False ):
         """
         Program that calculates the dimensionless stokes values from the input dimensionless 
         inversion equations, delta.
@@ -2491,6 +2511,10 @@ class faraday:
         optical depth, first axis separates by frequency, and second axis separates i, q, u, v.
         
         """
+        
+        # If beta is provided along with delta array, sets
+        if beta is not None:
+            self.update_beta( beta )
     
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
@@ -2512,16 +2536,12 @@ class faraday:
         # simplify k name
         k = self.k
         
-        # Determines tau values and dtau for this calculation
-        tau = beta * self.tau0
-        dtau = tau[1] - tau[0]
-        
         if verbose:
             # Sets appropriate print options
             np.set_printoptions(precision=4, linewidth=180)
             print('STOKES TEST:')
-            print('    tau min:', tau[0], '   tau max:', tau[-1] )
-            print('    dtau: ', dtau )
+            print('    tau min:', self.tau[0], '   tau max:', self.tau[-1] )
+            print('    dtau: ', self.dtau )
         
         
         
@@ -2797,30 +2817,7 @@ class faraday:
             return stokes1, stokes2
 
 
-# Small function for converting fits files to text
-def txt_to_fits( f ):
-    
-    # Gets list of all dzero output text files in outpath
-    outfiles = glob( '{0}FaradayOut_beta*dzero.txt'.format( f.outpath ) )
-    
-    # Shortens file names by removing outpath
-    outfiles = [ fname.replace( f.outpath, '' ) for fname in outfiles ]
-    
-    # Extracts beta from each file name
-    i1 = len( 'FaradayOut_beta' )
-    i2 = len( '_dzero.txt' )
-    betas = [ fname[i1:-i2] for fname in outfiles ]
-    betas = [ float(beta) for beta in betas ]
-    betas.sort()
-    
-    # Iterates through betas
-    for beta in betas:
-        
-        # Reads in text files for beta
-        f.deltas = f.readin( beta, ext='txt' )
-        
-        # Re-writes contents as fits file
-        f.write_deltas( beta, f.deltas, ext='fits' )
+
     
     
     
