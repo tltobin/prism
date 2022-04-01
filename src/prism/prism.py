@@ -1,15 +1,6 @@
 # Last updated 4/1/2021
-#     Updates to allow for user-generated default parameters for faraday object from config file.
-#         - Converted omegabar, tau0, theta, iquv0, W, and k parameters in faraday object from arguments to
-#           keyword arguments (with None as default)
-#         - Implementation of parameter file to override defaults on faraday class parameters. If specified, the parfile
-#           defaults override the built in class defaults, but can be overridden for an individual object by specifying
-#           a different value on call.
-#         - Added ability to set omegabar with (omegabar_max, omegabar_min, d_omegabar) and set tau0 with taures, but
-#           only through the parfile (not implemented in object initialization).
-#         - Related, creation of _default_ class in utils (and some helper functions in utils) to differentiate when
-#           parameters with useable defaults are specified on call. 
-#         - Some rearranging of help text in faraday class initialization.
+#     - Bug fixed in faraday.readin.
+#     - Debugged faraday.calc_R. 
 
 
 
@@ -1710,12 +1701,17 @@ class faraday:
         # Calculates the stimulated emission rates for each 0th, -, and + transition, as arrays
         #    varying with angular frequency bins at line end. Shape should be (NV,).
         Rzero_n  = 2.0 * Gamma * self.sintheta * self.sintheta * ( self.stoki[ -1, k : -1*k ] \
-                   - self.stokq[ -1, -1*k : k ] * self.costwophi - self.stoku[ -1, k : -1*k ] * self.sintwophi )
+                   - self.stokq[ -1, k : -1*k ] * self.costwophi - self.stoku[ -1, k : -1*k ] * self.sintwophi )
+                   
         Rplus_n  = Gamma * self.etap * ( cos2thetap1 * self.stoki[ -1, : -2*k ] - 2. * self.stokv[ -1, : -2*k ] * self.costheta \
                    + ( self.costwophi * self.stokq[ -1, : -2*k ] + self.sintwophi * self.stoku[ -1, : -2*k ] ) * self.sintheta * self.sintheta )
+        
         Rminus_n = Gamma * self.etam * ( cos2thetap1 * self.stoki[ -1, 2*k : ]  + 2. * self.stokv[ -1, 2*k : ] * self.costheta \
                    + ( self.costwophi * self.stokq[ -1, 2*k :  ] + self.sintwophi * self.stoku[ -1, 2*k :  ] ) * self.sintheta * self.sintheta )
         
+        if verbose:
+            print(' Rzero_n shape : {0},   Rplus_n shape : {1},   R_minus_n shape : {2} '.format( Rzero_n.shape, \
+                                                                                        Rplus_n.shape, Rminus_n.shape ))
         # Integrates each term along angular frequency bin using trap rule
         domegabar = self.omegabar[1] - self.omegabar[0]
         Rzero  = ( 0.5*Rzero_n[0]  + Rzero_n[1:-1].sum()  + 0.5*Rzero_n[-1]  ) * domegabar
@@ -1868,7 +1864,7 @@ class faraday:
             hdu.close()
         
         # Updates beta
-        self.update_beta( self, float(beta) )
+        self.update_beta( float(beta) )
         
         return np.dstack(( dminus, dzero, dplus ))
     
