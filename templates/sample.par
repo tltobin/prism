@@ -1,0 +1,320 @@
+### Example parameter file for easy initialization of the prism.faraday class
+[FARADAY CLASS]
+# Note: Any parameters that support floats support the specification of those floats by expressions.
+# 
+##############################################################################################################
+# REQUIRED PARAMETERS -
+#   Must be specified here or on object creation. (No global defaults.)
+#
+# Parameter: omegabar
+#       Alt: omegabar_min, omegabar_max, and d_omegabar
+#    Status: Required - either omegabar or all three alts must be specified in this file or when object is 
+#                       initialized.
+#       
+#       Parameter: omegabar
+#           Data Type: List
+#           Units:     Angular Frequency [s^-1]
+#           Desc:      List of angular frequencies relative to line center for each frequency bin. Should have
+#                      length NV + 4k, where NV is the number of angular frequency bins *not* removed by edge 
+#                      effects when calculating population inversions, delta, and k is the number of bins 
+#                      spanned by the Zeeman shift. 
+#           Notes:     Specified as a list in parameter file. Will be converted into a NumPy array with 
+#                      longdouble precision.
+#           Example:   omegabar : [ -2e6, -1.5e6, -1e6, -5e5, 0, 5e5, 1e6, 1.5e6, 2e6 ]
+#
+#       Parameter: omegabar_min
+#           Data Type: Float
+#           Units:     Angular Frequency [s^-1]
+#           Desc:      Minimum angular frequency used to generate omegabar array. 
+#       Parameter: omegabar_max
+#           Data Type: Float
+#           Units:     Angular Frequency [s^-1]
+#           Desc:      Maximum angular frequency used to generate omegabar array. 
+#       Parameter: d_omegabar
+#           Data Type: Float
+#           Units:     Angular Frequency [s^-1]
+#           Desc:      Step size for the resulting list of angular frequencies, omegabar, ranging from 
+#                      omega_min to omega_max (inclusive).
+#           Notes:     Keep in mind that the zeeman splitting will be specified by the integer, k, so the 
+#                      zeeman splitting should be some integer multiple of d_omegabar.
+#       
+#   Notes: omegabar_min, omegabar_max, and d_omegabar are only used if omegabar is None *and* all three of 
+#          these parameters are set.
+#          When using the omegabar_min, omegabar_max, d_omegabar parameter set, omegabar_min and omegabar_max
+#          should span the whole NV + 4k bin range (see Desc. of omegbar above).
+#              
+
+omegabar : None
+omegabar_min : -1851200.0
+omegabar_max :  1851200.0
+d_omegabar :    740.48                                     # the Zeeman splitting, 1480.96/2.
+
+# 
+# Parameter: tau0
+#       Alt: taures
+#    Status: Required - One of these must be specified in this file or when object is initialized.
+#   
+#       Parameter: tau0
+#           Data Type: List
+#           Units:     None
+#           Desc:      List establishing bin locations through the cloud. Values in list should indicate the 
+#                      fraction of the cloud through which the ray has passed, ranging from 0 to 1, inclusive. 
+#                      (If cloud=2, this indicates the fraction of the cloud through which Ray 1 has passed.)  
+#                      Will be multiplied by the total optical depth (beta) for the cloud for calculation.
+#           Notes:     Specified as a list in parameter file. Will be converted into a NumPy array with 
+#                      longdouble precision.
+#           Example:   tau0 : [ 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 ]
+#   
+#       Parameter: taures
+#           Date Type: Integer
+#           Units:     None
+#           Desc:      The number of bins along the line of sight through the cloud. If tau0 is not provided
+#                      explicitly, it will be generated as an array from 0 to 1, inclusive, with a number of
+#                      bins equal to that specified by taures.
+#
+#   Notes: taures is only used if tau0 is None.
+# 
+
+tau0 : None
+taures : 101
+
+# 
+# Parameter: theta
+#    Status: Required - Must be specified in this file or when object is initialized.
+#
+#       Data Type: Float
+#       Units:     Radians
+#       Desc:      The angle between the magnetic field and the line of sight. If cloud=2, this will be taken 
+#                  as the theta for Ray 1, where Ray 2 has theta_2 = - theta.
+# 
+
+theta : None
+
+# 
+# Parameter: iquv0
+#    Status: Required - Must be specified in this file or when object is initialized.
+#
+#       Data Type: List (Length-4)
+#       Units:     None (Unitless Stokes)
+#       Desc:      The initial values of (unitless) Stokes i, q, u, and v for the ray prior to passing through 
+#                  the cloud. If cloud=2, these values are used for Ray 1 only. Use optional parameter iquvF 
+#                  to set the corresponding values for Ray 2 (see below).
+# 
+
+iquv0 : [ 10.**-8.2, 0., 0., 0. ]
+
+# 
+# Parameter: W
+#    Status: Required - Must be specified in this file or when object is initialized.
+#
+#       Data Type: Float
+#       Units:     Angular Frequency [s^-1]
+#       Desc:      The angular frequency of the Doppler Width.
+# 
+
+W : 9.038e5
+
+# 
+# Parameter: k
+#    Status: Required - Must be specified in this file or when object is initialized.
+#
+#       Data Type: Integer
+#       Units:     None (bins of omegabar)
+#       Desc:      The number of angular frequency bins in omegabar spanned by the Zeeman shift, delta omega.
+# 
+
+k : None
+
+#
+##############################################################################################################
+# HIGH PRIORITY PARAMETERS -
+#   Important parameters for all uses that have useful defaults.
+#
+# Parameter: phi
+#       Data Type: Float
+#       Units:     Radians
+#       Default:   0.0
+#       Desc:      The sky-plane angle. If cloud=2, this will be taken as the phi for Ray 1, where Ray 2 has 
+#                  phi_2 = - phi.
+
+phi : 0.0
+
+#
+# Parameter: n
+#       Data Type: Integer
+#       Units:     None
+#       Default:   50
+#       Desc:      The number of terms in the LDI expansion. Counting begins at 0.
+
+n : 50
+
+#
+# Parameter: outpath
+#       Data Type: String
+#       Default:   ''
+#       Desc:      The directory path (from current directory) to which the output dimensionless inversions 
+#                  will be saved for each beta value.
+#       Example:   outpath : path/to/my/output
+#       Note:      Leaving the value to the right of the ':' blank will result in an empty string.
+
+outpath : 
+
+#
+# Parameter: far_coeff
+#       Data Type: Float
+#       Units:     None
+#       Default:   0.0
+#       Desc:      Unitless value gives -gamma_QU / cos(theta). Can either be specified explicitly here or 
+#                  calculated from components later by calc_far_coeff method.
+
+far_coeff : 0.0
+
+#
+# Parameter: etapm
+#       Data Type: List (Length-2)
+#       Units:     None
+#       Default:   [ 1.0, 1.0 ]
+#       Desc:      Contains values [ eta^+ , eta^- ], where each corresponds to the relative line strengths 
+#                  between the +/- transition (respectively) and the 0 transition. I.e. 
+#                  eta^+ = | dhat^+ |^2 / | dhat^0 |^2 and eta^- = | dhat^- |^2 / | dhat^0 |^2, where the 
+#                  dhat terms are the dipole moments of each transition. 
+
+etapm : [ 1.0, 1.0 ]
+
+#
+# Parameter: alphapm
+#       Data Type: List (Length-2)
+#       Units:     None
+#       Default:   [ 1.0, 1.0 ]
+#       Desc:      Contains values [ alpha^+ , alpha^- ], where each corresponds to the ratio between the 
+#                  pump rate of the +/- state, respectively, and that of the 0 state. I.e. 
+#                  alpha^+ = P^+ / P^0 and alpha^- = P^- / P^0. 
+
+alphapm : [ 1.0, 1.0 ]
+
+#
+##############################################################################################################
+# HIGH PRIORITY PARAMETERS FOR BIDIRECTIONAL MASERS -
+#   Important parameters for that must be adjusted if bidirectional integration is desired
+#
+# Parameter: cloud
+#       Data Type: Integer (1 or 2)
+#       Units:     None
+#       Default:   1
+#       Desc:      Switch indicating whether the solution should be calculated for a uni-directional cloud 
+#                  (cloud=1) or a bi-directional cloud (cloud=2). If cloud = 2, requires optional parameter 
+#                  iquvF to be set.
+
+cloud : 1
+
+# 
+# Parameter: iquvF
+#       Data Type: List (Length-4)
+#       Units:     None (Unitless Stokes)
+#       Default:   None
+#       Desc:      The initial values of (unitless) Stokes i, q, u, and v for Ray 2 prior to passing through 
+#                  the cloud. Only used if cloud=2. If cloud=2 and iquvF is not provided (i.e., is None), 
+#                  will use values provided for iquv0 as iquvF.
+
+iquvF : None
+
+#
+##############################################################################################################
+# HIGH PRIORITY PARAMETERS FOR STARTING OR RESUMING A SOLUTION -
+#   Important parameters for that must be set if starting a new solution or resuming a previous one.
+#
+# Parameter: betas
+#       Data Type: Float or List
+#       Units:     None
+#       Default:   None
+#       Desc:      Value or a list of total optical depths for the cloud.
+#                  Must be set if either beginning a new calculation or iterating a previous solution for 
+#                  new values of beta.
+#                  Length should be N, where N is the total number of solutions that will be calculated. 
+#                  Values should be specified in increasing order, as the solution for each optical depth 
+#                  will be used as the initial guess for the next, and computation time increases with 
+#                  increasing optical depth. If no prior results are available, recommend starting with the
+#                  first value in this array < 1.0. Each value will be multiplied by array tau0 to set the 
+#                  optical depth transversed the cloud at each spatial resolution point.
+
+betas : [ 0.1, 0.3, 0.6, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4,
+          2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 4.5, 6.0, 8.0, 10., 13., 16., 20., 25., 30., 45., 60., 80.,
+          100. ]
+
+# 
+# Parameter: resume
+#       Data Type: Boolean True/False
+#       Default:   False
+#       Desc:      Whether the solving method, run, will begin with no prior information about the deltas 
+#                  array (resume=False) or if this is a continuation of a previous attempt at solving 
+#                  (resume=True). If the former, the initial guess for the first solution with betas[0] 
+#                  will be an array of ones. If you wish to continue a previous solving run, set resume to 
+#                  be True and optional parameter lastdelta (see below) to be the last known array of deltas, 
+#                  which will be used as the inital guess for the new betas[0] solution. 
+#                  May also use trend fitting to extrapolate an initial guess for deltas using lastdelta and 
+#                  lastdelta2. (Not currently recommended.)
+
+resume : False
+
+# 
+# Parameter: lastdelta
+#       This parameter is not available for default value adjustment through the parameter file ingestion 
+#       as any value specified besides the default None is expected to be too large of an array, in addition
+#       to being dependent on the individual call. 
+#
+#
+##############################################################################################################
+# LOW PRIORITY PARAMETERS -
+#   Parameters that probably don't need adjusting in most cases
+#
+# Parameter: verbose
+#       Data Type: Boolean True/False
+#       Default:   True
+#       Desc:      Whether to print feedback to terminal at various stages of the process. 
+
+verbose : True
+
+#
+# Parameter: ftol
+#       Data Type: Float
+#       Default:   6e-10
+#       Desc:      The tolerance in minimizing the delta residuals used to determine convergence on a new 
+#                  solution. Passed directly to scipy.optimize.newton_krylov as its parameter, f_tol.
+
+ftol : 6e-10
+
+#
+# Parameter: endfill
+#       Data Type: String (fit or zero)
+#       Default:   zero
+#       Desc:      Determines how 2k angular frequency bins on either end will be filled in the inversion 
+#                  calculation. If endfill='fit', a 4th order polynomial as a function of frequency will be 
+#                  fit to the output delta arrays at each optical depth, and the end values will be filled 
+#                  in according to their frequency. If endfill='zero', the end points will just be set to 
+#                  zero.
+#                  Recommended: zero
+
+endfill : zero
+
+#
+# Parameter: trend
+#       Data Type: Boolean True/False
+#       Default:   False
+#       Desc:      Keyword indicating whether to use one previous fitted delta (lastdelta) as the initial 
+#                  guess for the next iteration (if trend = False), or use the two fitted previous deltas 
+#                  (lastdelta and lastdelta2) to generate an initial guess for the next iteration (if 
+#                  trend = True). For the latter, it uses lastdelta + ( lastdelta2 - lastdelta )/2 as the 
+#                  initial guess. Finally, if trend = 'auto', calculates the residual using both lastdelta 
+#                  and lastdelta + ( lastdelta2 - lastdelta )/2 before starting the zero-finding using the 
+#                  one with the lower residual as the initial guess. 
+#                  Note: Unclear that trend fitting actually saves computation time. 
+#                  Recommended: False
+
+trend : False
+
+# 
+# Parameter: lastdelta2
+#       This parameter is not available for default value adjustment through the parameter file ingestion 
+#       as any value specified besides the default None is expected to be too large of an array, in addition
+#       to being dependent on the individual call. 
+#
