@@ -1,6 +1,7 @@
-### Example parameter file for easy initialization of the prism.faraday class
-[FARADAY CLASS]
+# 
 # Note: Any parameters that support floats support the specification of those floats by expressions.
+# 
+[MASER CLASS]
 # 
 ##############################################################################################################
 # REQUIRED PARAMETERS -
@@ -284,8 +285,18 @@ verbose : True
 ftol : 6e-10
 
 #
+# Parameter: filename
+#       Data Type: String
+#       Default:   'FaradayOut'
+#       Desc:      Beginning of the file name used to save the output inversion solutions. For each total 
+#                  optical depth, beta, the inversion solutions will be saved to a file named 
+#                  '[filename]_beta[beta]_dminus.[fits/txt]' in the directory specified by outpath.
+
+filename : FaradayOut
+
+#
 # Parameter: endfill
-#       Data Type: String (fit or zero)
+#       Data Type: String ('fit' or 'zero')
 #       Default:   zero
 #       Desc:      Determines how 2k angular frequency bins on either end will be filled in the inversion 
 #                  calculation. If endfill='fit', a 4th order polynomial as a function of frequency will be 
@@ -318,3 +329,43 @@ trend : False
 #       as any value specified besides the default None is expected to be too large of an array, in addition
 #       to being dependent on the individual call. 
 #
+[MASER_V_THETA CLASS]
+# 
+##############################################################################################################
+# REQUIRED PARAMETERS -
+#   Must be specified here or on object creation. (No global defaults.)
+# 
+# Parameter: thetas
+#    Status: Required - Must be specified in this file or when object is initialized.
+#
+#       Data Type: List
+#       Units:     Radians OR Degrees (as indicated by units parameter below)
+#       Desc:      List of values for theta (in the units specified by the units keyword) for which to 
+#                  generate a maser object with the specified other parameters.
+
+thetas : [ 0.0, 2.5, 5.0, 7.5, 10.0, 12.5, 15.0, 17.5, 20.0, 22.5, 25.0, 27.5, 30.0, 35.0, 40.0, 45.0,
+          50.0, 54.0, 56.0, 60.0, 65.0, 70.0, 75.0, 80.0, 85.0, 90.0 ]
+
+#
+##############################################################################################################
+# HIGH PRIORITY PARAMETERS -
+#   Important parameters for all uses that have useful defaults.
+#
+# Parameter: theta_precision
+#       Data Type: Int
+#       Default:   1
+#       Desc:      The precision to which thetas values will be rounded when used as keys for the masers 
+#                  dictionary attribute. (Keep in mind, these values will be in the same units used on 
+#                  object initialization.)
+
+theta_precision : 1
+
+#
+# Parameter: units
+#       Data Type: String ('degrees', 'deg', 'd', 'radians', 'rad', 'r')
+#       Default:   'degrees'
+#       Desc:      The units in which the thetas values are provided. The masers dictionary attribute 
+#                  will use the values corresponding to these units, but they they will be converted to 
+#                  radians for initializing the individual maser objects.
+
+units : degrees
