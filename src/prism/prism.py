@@ -19,7 +19,10 @@
 #           a NumPy array of the values of theta provided, as well as the associated output paths for each, outpaths.
 #         - Allows theta to be specified in degrees or radians, instead of just radians, through the use of the 
 #           parameter, units.
-#         - 
+#         - The maser base class objects for each parameter set/theta are stored in the object attribute masers, a 
+#           dictionary with the values of theta provided on object initialization (rounded to theta_precision) as keys.
+#         - The calc_far_coeff, readin, and update_beta methods for the maser_v_theta object update all maser objects
+#           in the masers attribute dictionary.
 
 
 
