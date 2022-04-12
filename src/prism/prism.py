@@ -1,6 +1,26 @@
-# Last updated 4/1/2021
-#     - Bug fixed in faraday.readin.
-#     - Debugged faraday.calc_R. 
+# Last updated 4/12/2021
+#    -> Renamed base class faraday --> maser.
+#    -> Added keyword filename to base class maser (formerly faraday), with root of output file name to which the
+#       inversion solutions will be saved. (Previously hard-coded as 'FaradayOut'.)
+#    -> Moved physical constants to separate script const.py
+#    -> Created new maser base class, _maser_base_, to handle parameter prioritization from call/parameter file/
+#       defaults, with option to ignore specific parameters.
+#         - Class has method, calc_far_coeff, which is referenced by others, but this class requires that W be handed
+#           to it explicitly. Methods of the same name in higher level classes provide W from the object attribute of
+#           the same name.
+#         - Class also has lower level methods, _read_par_file_ and _process_key_, to read the parameter file using
+#           configparser and find the value for a specific key given a config file section from configparser (if any) 
+#           and instructions on the allowed data type and value(s) for the parameter.
+#    -> Class for single run, maser (formerly faraday) updated to use _maser_base_ for parameter handling in __init__ 
+#       and its calc_far_coeff method in the maser method of the same name.
+#    -> Created new method, maser_v_theta, to handle sets of maser objects that vary only in theta.
+#         - Also uses _maser_base_ class for parameter handling and calc_far_coeff base.
+#         - maser_v_theta object has most attributes that a maser object would, except for theta. Instead, has thetas,
+#           a NumPy array of the values of theta provided, as well as the associated output paths for each, outpaths.
+#         - Allows theta to be specified in degrees or radians, instead of just radians, through the use of the 
+#           parameter, units.
+#         - 
+
 
 
 
@@ -11,23 +31,29 @@ from scipy.optimize.nonlin import NoConvergence
 from math import cos, sin, exp, pi, factorial
 import os
 import configparser
+from collections import OrderedDict
 
 from .utils import _default_, string_to_list, string_to_bool
+from .const import e_charge, E0, me, c
 
 
 # saves original numpy print options 
 orig_print = np.get_printoptions()
 
 
-class faraday:
+
+############################### Primary object class for single parameter set ###############################
+
+class maser(_maser_base_):
     def __init__(self, parfile = None, \
-                    omegabar = None, tau0 = None, theta = None, iquv0 = None, W = None, k = None, \
+                    omegabar = _default_( None ), tau0 = _default_( None ), theta = _default_( None ), \
+                    iquv0 = _default_( None ), W = _default_( None ), k = _default_( None ), \
                     phi = _default_( 0.0 ), n = _default_( 50 ), outpath = _default_( '' ), \
                     far_coeff = _default_( 0.0 ), etapm = _default_( 1.0 ), alphapm = _default_( 1.0 ), \
                     cloud = _default_( 1 ), iquvF = _default_( None ), \
-                    betas = _default_( None ), resume = _default_( False ), lastdelta = _default_( None ), \
-                    verbose = _default_( True ), ftol = _default_( 6e-10 ), endfill = _default_( 'zero' ), \
-                    trend = _default_( False ), lastdelta2 = _default_( None ) ):
+                    betas = _default_( None ), resume = _default_( False ), lastdelta = None, \
+                    verbose = _default_( True ), ftol = _default_( 6e-10 ), filename = _default_( 'FaradayOut' ), \
+                    endfill = _default_( 'zero' ), trend = _default_( False ), lastdelta2 = None ):
         """
         Object for calculating the dimensionless population inversions for a given parameter set.
         
@@ -196,6 +222,12 @@ class faraday:
                                 convergence on a new solution. Passed directly to 
                                 scipy.optimize.newton_krylov as its parameter, f_tol. Saved as object 
                                 attribute, ftol.
+            filename        String
+                                [ Default = 'FaradayOut' ]
+                                Beginning of the file name used to save the output inversion solutions.
+                                For each total optical depth, beta, the inversion solutions will be
+                                saved to a file named '[filename]_beta[beta]_dminus.[fits/txt]' in the 
+                                directory specified by outpath.
             endfill         'fit' or 'zero'
                                 [ Default = 'zero' ]
                                 Determines how 2k angular frequency bins on either end will be filled 
@@ -253,855 +285,33 @@ class faraday:
             
         """
         
-        # Processes parameters if no par file provided
-        if parfile is None:
         
-            #### Saves required parameters as object attributes ####
-            
-            # Start with the arrays/lists, checking object types simultaneously
-            for key, par, tp in zip( [ 'omegabar', 'tau0', 'iquv0' ], [ omegabar, tau0, iquv0], \
-                                        [ np.longdouble, np.longdouble, float ] ):
-                
-                # First make sure required parameter was actually specified
-                if par is None:
-                    raise ValueError( 'Keyword {0} must be provided.'.format( key ) )
-                
-                # Next, check that parameter is either a list or array
-                elif not isinstance( par, np.ndarray ) and not isinstance( par, list ):
-                    raise TypeError( 'Keyword {0} must be either a list or NumPy array.'.format(key) )
-                
-                # If it's iquv0, needs to have length 4
-                elif key == 'iquv0':
-                    if len( list( par ) ) != 4:
-                        raise ValueError( 'Keyword {0} must have length 4. (Current length {1})'.format( key, len( list( par ) ) ) )
-                
-                # Finally, if it's made it here, sets them as object attribute of same name, converting to array
-                #   in case it's a list
-                self.__dict__[key] = np.array( par ).astype( tp )
-            
-            
-            # Similar processing for other required parameters
-            # Theta and W must be floats, k must be an integer
-            for key, par, tp in zip( ['theta', 'W', 'k'], [theta, W, k], [float, float, int] ):
-                
-                # First make sure required parameter was actually specified
-                if par is None:
-                    raise ValueError( 'Keyword {0} must be provided.'.format( key ) )
-                
-                # Tries to save value to dictionary as desired type, but if type conversion fails, raises error
-                try:
-                    self.__dict__[key] = tp( par )
-                except:
-                    raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format(key, tp.__name__, par.dtype ) )
-                
-            
-            
-            
-            
+        #### Uses _maser_base_ initialization to load parfile (if any) and the following attributes:
+        ####     phi, n, outpath, far_coeff, etapm, alphapm, cloud, betas, resume, lastdelta, verbose, ftol, filename,
+        ####     endfill, trend, lastdelta2
+        ####     + fccalc, sintwophi, costwophi
+        #### Saves config file as attribute conf, name of parfile as attribute parfile, and name of base section in
+        ####     config file as attribute sect
+        super().__init__( parfile = parfile, ignore = [], \
+                    omegabar = omegabar, tau0 = tau0, theta = theta, iquv0 = iquv0, W = W, k = k, \
+                    phi = phi, n = n, outpath = outpath, \
+                    far_coeff = far_coeff, etapm = etapm, alphapm = alphapm, \
+                    cloud = cloud, iquvF = iquvF, \
+                    betas = betas, resume = resume, lastdelta = lastdelta, \
+                    verbose = verbose, ftol = ftol, filename = filename, \
+                    endfill = endfill, trend = trend, lastdelta2 = lastdelta2)
         
+        #### Some extra work on betas attribute, setting beta, tau, and dtau
         
-            #### Saving required parameters that have useful defaults ####
-            
-            # Values that are saved directly and are just required to be a specific type first
-            for key, par, tp in zip( [ 'phi', 'n', 'far_coeff', 'resume', 'verbose', 'ftol' ], \
-                                     [  phi ,  n ,  far_coeff ,  resume ,  verbose ,  ftol  ], \
-                                     [ float, int,    float   ,   bool  ,    bool  ,  float ]  ):
-                
-                # If the default value is provided, retrieves actual value (default class only created for 
-                #   clarification when using parfile; not required here)
-                #   If using the default, don't need to check the type
-                if isinstance( par, _default_ ):
-                    self.__dict__[key] = par.value
-                
-                # If provided, tries to save value to dictionary as desired type, but if type conversion fails, raises 
-                #   error
-                else:
-                    try:
-                        if tp is not bool or not isinstance( par, str ):
-                            self.__dict__[key] = tp( par )
-                        else:
-                            self.__dict__[key] = string_to_bool( par )
-                    except:
-                        raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format(key, tp.__name__, par.dtype ) )
-            
-            
-            # Processing outpath
-            # If default, saves directly
-            if isinstance( outpath, _default_ ):
-                self.outpath = outpath.value
-                
-            # If provided, it needs to be a string ending with '/'
-            elif isinstance( outpath, str ):
-                if len( outpath ) > 0 and not outpath.endswith('/'):
-                    outpath = '{0}/'.format( outpath )
-                self.outpath = outpath
-            
-            # If provided but not a string, raises error
-            else:
-                raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format('outpath', 'str', outpath.dtype ) )
-            
-            
-            # Processing etapm and alphapm
-            for key_pfx, par in zip( [ 'eta', 'alpha' ], [ etapm, alphapm ] ):
-                key_pm = '{0}pm'.format( key_pfx )
-                key_p  = '{0}p'.format(  key_pfx )
-                key_m  = '{0}m'.format(  key_pfx )
-                
-                # If default, saves directly (defaults are both single values, not lists)
-                if isinstance( par, _default_ ):
-                    self.__dict__[ key_p ] = par.value
-                    self.__dict__[ key_m ] = par.value
-                
-                # If it's not the default, checks if it's a len-2 list or array
-                elif isinstance( par, np.ndarray ) or isinstance( par, list ):
-                    if len( list( par ) ) == 2:
-                        try:
-                            self.__dict__[ key_p ] = float( par[0] )
-                            self.__dict__[ key_m ] = float( par[1] )
-                        except:
-                            raise ValueError( 'Values in {0} list must be data type {1}. (Current types: {2}, {3})'.format(key_pm, \
-                                                                                'float', par[0].dtype, par[1].dtype ) )
-                    # If the list length is one, just assumes they wanted the same value for both
-                    elif len( list( par ) ) == 1:
-                        try:
-                            self.__dict__[ key_p ] = float( par[0] )
-                            self.__dict__[ key_m ] = float( par[0] )
-                        except:
-                            raise ValueError( 'Values in {0} list must be data type {1}. (Current type: {2})'.format( \
-                                                                                        key_pm, 'float', par[0].dtype ) )
-                    
-                    # If the list is longer than 2, raises an error
-                    else:
-                        raise ValueError( 'Keyword {0} must have length 2 if specified as list/array. (Current length {1})'.format( \
-                                                                                        key_pm, len( list( par ) ) ) )
-                
-                # If it's not the default and it's not a list or array, assumes it's a single float and tries to save
-                else:
-                    try:
-                        self.__dict__[ key_p ] = float( par )
-                        self.__dict__[ key_m ] = float( par )
-                    except:
-                        raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format( \
-                                                                                        key_pm, 'float', par.dtype ) )
-            
-            
-            # Processing cloud
-            # If default, saves directly
-            if isinstance( cloud, _default_ ):
-                self.cloud = cloud.value
-            
-            # If provided, makes sure that it's an integer and either 1 or 2
-            try:
-                cloud = int( cloud )
-                if cloud in [ 1, 2 ]:
-                    self.cloud = cloud
-                else:
-                    raise ValueError( 'Accepted values for keyword {0} are {1}. (Current value: {2})'.format( \
-                                                                                        'cloud', '1 or 2', cloud ) )
-            
-            except:
-                raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format( \
-                                                                                        'cloud', 'int', cloud.dtype ) )
-            
-            
-            # Processing iquvF
-            # Only save if cloud is 2
-            if self.cloud == 2:
-                
-                # If default, saves directly, but the default iquvF is iquv0 (already checked)
-                if isinstance( iquvF, _default_ ):
-                    self.iquvF = np.array( self.iquv0 )
-                
-                # If provided, makes sure that it's either a list or array
-                elif not isinstance( iquvF, np.ndarray ) and not isinstance( iquvF, list ):
-                    raise TypeError( 'Keyword {0} must be either a list or NumPy array.'.format('iquvF') )
-                
-                # If it's iquv0, needs to have length 4
-                elif len( list( iquvF ) ) != 4:
-                    raise ValueError( 'Keyword {0} must have length 4. (Current length {1})'.format( 'iquvF', len( list( iquvF ) ) ) )
-                
-                # Finally, if it's made it here, sets them as object attribute of same name, converting to array
-                #   in case it's a list
-                self.iquvF = np.array( iquvF )
-            
-            
-            # Processing betas
-            # If default, saves directly
-            if isinstance( betas, _default_ ):
-                self.betas = betas.value
-                
-                # Default is None, so sets beta, tau, and dtau accordingly
-                for key in [ 'beta', 'tau', 'dtau' ]:
-                    self.__dict__[ key ] = None
-            
-            # If provided, it has to be either None, a Float/Integer, or a list/NumPy array
-            # Processes first if specified as None
-            elif betas is None:
-                for key in [ 'betas', 'beta', 'tau', 'dtau' ]:
-                    self.__dict__[ key ] = None
-            
-            # Processes if list or array
-            elif isinstance( betas, np.ndarray ) or isinstance( betas, list ):
-                
-                # Sets betas attribute as an array, and updates beta, tau, and dtau as the first value in the array
-                #   Does check that array contents can be converted to floats
-                try:
-                    self.betas = np.array( betas ).astype(float)
-                    self.update_beta( self.betas[0] )
-                except:
-                    raise TypeError( 'Contents of list or array provided for {0} must be {1}.'.format( 'betas', 'float' ) )
-            
-            # Otherwise, tries to convert to float
-            else:
-                try:
-                    self.betas = np.array([ float(betas) ])
-                    self.update_beta( self.betas[0] )
-                except:
-                    raise TypeError( 'Keyword {0} must be must be a {1}.'.format( 'betas', 'float' ) )
-            
-            
-            # Processes lastdelta and lastdelta2
-            for key, par in zip( [ 'lastdelta', 'lastdelta2' ], [ lastdelta, lastdelta2 ] ):
-                
-                # If default, saves directly
-                if isinstance( par, _default_ ):
-                    self.__dict__[key] = par.value
-                
-                # Otherwise, only checks if type is None, list, or NumPy array
-                elif par is None:
-                    self.__dict__[key] = par
-                elif isinstance( par, np.ndarray ) or isinstance( par, list ):
-                    self.__dict__[key] = np.array( par )
-                else:
-                    raise TypeError( 'Keyword {0} must be must be a {1}. (Current type: {2})'.format( key, \
-                                                                            'list, NumPy array, or None', par.dtype ) )
-                
-                
-            # Processes endfill
-            # If default, saves directly
-            if isinstance( endfill, _default_ ):
-                self.endfill = endfill.value
-            
-            # If provided, must be a string, and must be either 'fit' or 'zero'
-            elif isinstance( endfill, str ):
-                if endfill in [ 'fit', 'zero' ]:
-                    self.endfill = endfill
-                else:
-                    raise ValueError( "Accepted values for keyword {0} are {1}. (Current value: '{2}')".format( \
-                                                                            'endfill', "'fit' or 'zero'", endfill ) )
-            else:
-                raise TypeError( 'Keyword {0} must be must be a {1}. (Current type: {2})'.format( 'endfill', \
-                                                                                            'str', endfill.dtype ) )
-            
-            
-            # Processes trend
-            # If default, saves directly
-            if isinstance( trend, _default_ ):
-                self.trend = trend.value
-            
-            # If provided, must be either a boolean or 'auto' (includes accommodation if True/False provided as string)
-            elif isinstance( trend, str ):
-                if trend.lower() == 'auto':
-                    self.trend = trend.lower()
-                elif trend.lower() in ['true', 'false']:
-                    self.trend = string_to_bool( trend )
-                else:
-                    raise ValueError( "Accepted values for keyword {0} are {1}. (Current value: '{2}')".format( \
-                                                                            'trend', "'auto', True, or False", trend ) )
-            
-            # If not a string, must be a boolean
-            elif isinstance( trend, bool ):
-                self.trend = trend
-            else:
-                raise TypeError( 'Keyword {0} must be must be a {1}. (Current type: {2})'.format( 'trend', \
-                                                                                        'str or bool', endfill.dtype ) )
-                                                                            
-                
-            
-            
-            
-           
-        # Or, if parameter file is provided, processes that
-        else:
-            
-            #### Reading the config file ####
-            
-            # First, checks that the config file exists
-            if not os.path.exists( parfile ):
-                raise FileNotFoundError( 'Parameter file {0} does not exist.'.format(parfile) )
-            
-            # Reads in the config file, allowing for in-line comments with '#'
-            conf = configparser.ConfigParser(inline_comment_prefixes=['#'])
-            successful_files = conf.read( parfile )
-    
-            # If no files were successfully read, raises an error
-            if len( successful_files ) == 0:
-                raise ValueError( 'Parsing of config file {0} failed.'.format( parfile ) )
-    
-            # Checks that 'FARADAY CLASS' section is present in the parameter file
-            elif 'FARADAY CLASS' not in conf.sections():
-                raise ValueError( 'Section {0} not found in file {1}'.format( section, parfile ) )
-            
-            # Just looks at faraday class section
-            conf = conf['FARADAY CLASS']
-            
-            
-            
-            #### Saves required parameters as object attributes ####
-            
-            # Starts with omegabar
-            # If it isn't provided directly, uses value from config file
-            if omegabar is None:
-                    
-                # Checks that keyword is specified in the config file and isn't None
-                if 'omegabar' in conf and conf['omegabar'].lower() != 'none':
-                    
-                    # Converts string to list
-                    omegabar = conf['omegabar'].strip()
-                    if omegabar.startswith('[') and omegabar.endswith(']'):
-                        try:
-                            self.omegabar = np.array( string_to_list( omegabar, astype = np.longdouble ) )
-                        except:
-                            raise ValueError( 'Values in {0} list in parameter file must be data type {1}'.format( \
-                                                                                                'omegabar', 'float' ) )
-                
-                # Otherwise, checks for omegabar_min, omegabar_max, and d_omegabar
-                elif 'omegabar_min' in conf and 'omegabar_max' in conf and 'd_omegabar' in conf and \
-                    'none' not in [ conf['omegabar_min'].lower(), conf['omegabar_max'].lower(), conf['d_omegabar'].lower() ]:
-                    
-                    # Tries to process the three parameters into an omegabar array
-                    try:
-                        omegabar_min = np.longdouble( eval( conf['omegabar_min'] ) )
-                        omegabar_max = np.longdouble( eval( conf['omegabar_max'] ) )
-                        d_omegabar   = np.longdouble( eval( conf['d_omegabar'] ) )
-                        self.omegabar = np.arange( omegabar_min, omegabar_max, d_omegabar, dtype = np.longdouble )
-                        if omegabar_max - self.omegabar[-1] == d_omegabar:
-                            self.omegabar = np.append( self.omegabar, omegabar_max )
-                    except:
-                        raise ValueError( 'Keywords omegabar_min, omegabar_max, and d_omegabar in parameter file must be floats.' )
-                else:
-                    raise ValueError( 'Keyword omegabar must be provided either on call or in parameter file.' )
-            
-            # If value is provided directly, just sets
-            else:
-                # Next, check omegabar is either a list or array and sets as array
-                if isinstance( omegabar, np.ndarray ) or isinstance( omegabar, list ):
-                    self.omegabar = np.array( omegabar ).astype( np.longdouble )
-                else:
-                    raise TypeError( 'Keyword {0} must be either a list or NumPy array.'.format('omegabar') )
-            
-            
-            # Processes tau0
-            # If it isn't provided directly, uses value from config file
-            if tau0 is None:
-                
-                # Checks that keyword is specified in the config file and isn't None
-                if 'tau0' in conf and conf['tau0'].lower() != 'none':
-                    
-                    # Converts string to list
-                    tau0 = conf['tau0'].strip()
-                    if tau0.startswith('[') and tau0.endswith(']'):
-                        try:
-                            self.tau0 = np.array( string_to_list( tau0, astype = np.longdouble ) )
-                        except:
-                            raise ValueError( 'Values in {0} list in parameter file must be data type {1}.'.format( \
-                                                                                                    'tau0', 'float', ) )
-                    
-                # Otherwise, checks for taures
-                elif 'taures' in conf and conf['taures'].lower() != 'none':
-                    
-                    # If provided, taures should be an integer; processes into a tau0 array
-                    try:
-                        taures = int( eval( conf['taures'] ) )
-                        self.tau0 = np.linspace( 0, 1, taures, dtype = np.longdouble )
-                    except:
-                        raise ValueError( 'Keyword taures in parameter file must be an integer.' )
-                else:
-                    raise ValueError( 'Keyword tau0 must be provided either on call or in parameter file.' )
-            
-            # If value is provided directly, just sets
-            else:
-                # Next, check tau0 is either a list or array and sets as array
-                if isinstance( tau0, np.ndarray ) or isinstance( tau0, list ):
-                    self.tau0 = np.array( tau0 ).astype( np.longdouble )
-                else:
-                    raise TypeError( 'Keyword {0} must be either a list or NumPy array.'.format('tau0') )
-            
-            
-            # Processes iquv0
-            # If it isn't provided directly, uses value from config file
-            if iquv0 is None:
-                
-                # Checks that keyword is specified in the config file and isn't None
-                if 'iquv0' in conf and conf['iquv0'].lower() != 'none':
-                    
-                    # Converts string to list
-                    iquv0 = conf['iquv0'].strip()
-                    if iquv0.startswith('[') and iquv0.endswith(']'):
-                        try:
-                            iquv0 = np.array( string_to_list( iquv0, astype = float ) )
-                        except:
-                            raise ValueError( 'Values in {0} list in parameter file must be data type {1}.'.format( \
-                                                                                                    'iquv0', 'float' ) )
-                        
-                        # Checks length
-                        if iquv0.size == 4:
-                            self.iquv0 = iquv0
-                        else:
-                            raise ValueError( 'Value of {0} from parameter file must have length 4. (Current length {1})'.format( 
-                                                                                                'iquv0', iquv0.size ) )
-                    else:
-                        raise ValueError( 'Keyword {0} in parameter file must be a {1}.'.format( 'iquv0', 'list' ) )
-                
-                else:
-                    raise ValueError( 'Keyword {0} must be provided either on call or in parameter file.'.format('iquv0') )
-            
-            # If value is provided directly, just sets
-            else:
-                # Check iquv0 is either a list or array and sets as array
-                if isinstance( iquv0, np.ndarray ) or isinstance( iquv0, list ):
-                    if len( list( iquv0 ) ) == 4:
-                        self.iquv0 = np.array( iquv0 ).astype( float )
-                    else:
-                        raise ValueError( 'Keyword {0} must have length 4. (Current length {1})'.format( 'iquv0', len( list( iquv0 ) ) ) )
-                else:
-                    raise TypeError( 'Keyword {0} must be either a list or NumPy array.'.format('iquv0') )
-                    
-            
-            # Processes remaining required parameters, theta, W, and k
-            for key, par, tp in zip( ['theta', 'W', 'k'], [theta, W, k], [float, float, int] ):
-                
-                # If it isn't provided directly , checks the config file
-                if par is None:
-                    
-                    # Checks that keyword is in the config file and isn't None
-                    if key in conf and conf[key].lower() != 'none':
-                        
-                        # Tries to save as the appropriate type
-                        try:
-                            self.__dict__[key] = tp( eval( conf[key] ) )
-                        except:
-                            raise ValueError( 'Keyword {0} in parameter file must be a {1}.'.format( key, tp.__name__ ) )
-                
-                    else:
-                        raise ValueError( 'Keyword {0} must be provided either on call or in parameter file.'.format( key ) )
-                
-                # If value is provided directly, just sets
-                else:
-                    
-                    # Tries to save as the appropriate type
-                    try:
-                        self.__dict__[key] = tp( par )
-                    except:
-                        raise ValueError( 'Keyword {0} must be a {1}.'.format( key, tp.__name__ ) )
-                
-                
-            
-            
-            
-            #### Saving required parameters that have useful defaults ####
-            
-            # Values that are saved directly and are just required to be a specific type first
-            for key, par, tp in zip( [ 'phi', 'n', 'far_coeff', 'resume', 'verbose', 'ftol' ], \
-                                     [  phi ,  n ,  far_coeff ,  resume ,  verbose ,  ftol  ], \
-                                     [ float, int,    float   ,   bool  ,    bool  ,  float ]  ):
-                
-                # If provided directly on call, uses that value
-                if not isinstance( par, _default_ ):
-                    try:
-                        if tp is not bool or not isinstance( par, str ):
-                            self.__dict__[key] = tp( par )
-                        else:
-                            self.__dict__[key] = string_to_bool( par )
-                    except:
-                        raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format(key, tp.__name__, par.dtype ) )
-                
-                # If *not* provided on call, checks if provided in parameter file (and not none in parfile)
-                elif key in conf and conf[key].lower() != 'none':
-                
-                    # Tries to save as the appropriate type
-                    try:
-                        if tp is not bool:
-                            self.__dict__[key] = tp( eval( conf[key] ) )
-                        else:
-                            self.__dict__[key] = string_to_bool( conf[key] )
-                    except:
-                        raise ValueError( 'Keyword {0} in parameter file must be a {1}.'.format( key, tp.__name__ ) )
-                
-                # If not provided on call and not in parameter file, uses default class value; should be correct type
-                else:
-                    self.__dict__[key] = par.value
-                
-                    
-            # Processing outpath
-            # If provided directly on call, uses that value
-            if not isinstance( outpath, _default_ ):
-                if isinstance( outpath, str ):
-                    
-                    # Makes sure it ends in a '/'
-                    if len( outpath ) > 0 and not outpath.endswith('/'):
-                        outpath = '{0}/'.format( outpath )
-                    self.outpath = outpath
-                
-                else:
-                    raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format('outpath', 'str', outpath.dtype ) )
-            
-            # If *not* provided on call, checks if provided in parameter file (and not none in parfile)
-            elif 'outpath' in conf and conf['outpath'].lower() != 'none':
-                
-                # Tries to save as the appropriate type
-                outpath = conf['outpath'].strip()
-                if len( outpath ) > 0 and not outpath.endswith('/'):
-                        outpath = '{0}/'.format( outpath )
-                self.outpath = outpath
-            
-            # If not provided on call and not in parameter file, uses default class value; should be correct type
-            else:
-                self.outpath = outpath.value
-            
-            
-            # Processing etapm and alphapm
-            for key_pfx, par in zip( [ 'eta', 'alpha' ], [ etapm, alphapm ] ):
-                key_pm = '{0}pm'.format( key_pfx )
-                key_p  = '{0}p'.format(  key_pfx )
-                key_m  = '{0}m'.format(  key_pfx )
-                
-                # If provided directly on call, uses that value
-                if not isinstance( par, _default_ ):
-                    
-                    # Processes if it's a list or array
-                    if isinstance( par, np.ndarray ) or isinstance( par, list ):
-                        if len( list( par ) ) == 2:
-                            try:
-                                self.__dict__[ key_p ] = float( par[0] )
-                                self.__dict__[ key_m ] = float( par[1] )
-                            except:
-                                raise ValueError( 'Values in {0} list must be data type {1}. (Current types: {2}, {3})'.format(\
-                                                                                key_pm, 'float', par[0].dtype, par[1].dtype ) )
-                                                                                
-                        # If the list length is one, just assumes they wanted the same value for both
-                        elif len( list( par ) ) == 1:
-                            try:
-                                self.__dict__[ key_p ] = float( par[0] )
-                                self.__dict__[ key_m ] = float( par[0] )
-                            except:
-                                raise ValueError( 'Values in {0} list must be data type {1}. (Current type: {2})'.format( \
-                                                                                            key_pm, 'float', par[0].dtype ) )
-            
-                        # If the list is longer than 2, raises an error
-                        else:
-                            raise ValueError( 'Keyword {0} must have length 2 if specified as list/array. (Current length {1})'.format( \
-                                                                                            key_pm, len( list( par ) ) ) )
-                    
-                    # If it's not the default and it's not a list or array, assumes it's a single float and tries to save
-                    else:
-                        try:
-                            self.__dict__[ key_p ] = float( par )
-                            self.__dict__[ key_m ] = float( par )
-                        except:
-                            raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format( \
-                                                                                            key_pm, 'float', par.dtype ) )
-                
-                # If *not* provided on call, checks if provided in parameter file (and not none in parfile)
-                elif key_pm in conf and conf[key_pm].lower() != 'none':
-                
-                    # Checks if it's provided as a list
-                    par = conf[key_pm].strip()
-                    if par.startswith('[') and par.endswith(']'):
-                        try:
-                            par = np.array( string_to_list( par, astype = float ) )
-                        except:
-                            raise ValueError( 'Values in {0} list in parameter file must be data type {1}.'.format( \
-                                                                                                    key_pm, 'float' ) )
-                            
-                        # Checks length and sets
-                        if par.size == 2:
-                            self.__dict__[ key_p ] = float( par[0] )
-                            self.__dict__[ key_m ] = float( par[1] )
-                                                                                                  
-                        # If the list length is one, just assumes they wanted the same value for both
-                        elif par.size == 1:
-                            self.__dict__[ key_p ] = float( par[0] )
-                            self.__dict__[ key_m ] = float( par[0] )
-                            
-                        # If the list is longer than 2, raises an error
-                        else:
-                            raise ValueError( 'Keyword {0} in parameter file must have length 2 if specified as list/array. (Current length {1})'.format( \
-                                                                                                    key_pm, par.size ) )
-                        
-                    # If it doesn't start with a '[' and end with a ']', tries to process as a single float
-                    else:
-                        try:
-                            self.__dict__[ key_p ] = float( par )
-                            self.__dict__[ key_m ] = float( par )
-                        except:
-                            raise ValueError( 'Keyword {0} in parameter file must be data type {1}.'.format( \
-                                                                                                    key_pm, 'float' ) )
-                
-                # If not provided on call and not in parameter file, uses default class value; should be correct type
-                else:
-                    self.__dict__[ key_p ] = par.value
-                    self.__dict__[ key_m ] = par.value
-            
-            
-            # Processing cloud
-            # If provided directly on call, uses that value
-            if not isinstance( cloud, _default_ ):
-                
-                # If provided, makes sure that it's an integer and either 1 or 2
-                try:
-                    cloud = int( cloud )
-                    if cloud in [ 1, 2 ]:
-                        self.cloud = cloud
-                    else:
-                        raise ValueError( 'Accepted values for keyword {0} are {1}. (Current value: {2})'.format( \
-                                                                                            'cloud', '1 or 2', cloud ) )
-                except:
-                    raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format( \
-                                                                                        'cloud', 'int', cloud.dtype ) )
-                
-            # If *not* provided on call, checks if provided in parameter file (and not none in parfile)
-            elif 'cloud' in conf and conf['cloud'].lower() != 'none':
-                
-                # Makes sure that it's an integer and either 1 or 2 and saves if true
-                try:
-                    cloud = int( conf['cloud'] )
-                except:
-                    raise ValueError( 'Keyword {0} in parameter file must be data type {1}.'.format( \
-                                                                                                    'cloud', 'int' ) )
-                if cloud in [ 1, 2 ]:
-                    self.cloud = cloud
-                else:
-                    raise ValueError( 'Accepted values for keyword {0} in parameter file are {1}. (Current value: {2})'.format( \
-                                                                                            'cloud', '1 or 2', cloud ) )
-            
-            # If not provided on call and not in parameter file, uses default class value; should be correct type
-            else:
-                self.cloud = cloud.value
-            
-            
-            # Processing iquvF
-            # Only save if cloud is 2
-            if self.cloud == 2:
-            
-                # If provided directly on call, uses that value
-                if not isinstance( iquvF, _default_ ):
-                    
-                    # If provided, makes sure that it's either a list or array of length 4
-                    if isinstance( iquvF, np.ndarray ) or isinstance( iquvF, list ):
-                        if len( list( iquvF ) ) != 4:
-                            try:
-                                self.iquvF = np.array( iquvF ).astype( float )
-                            except:
-                                raise ValueError( 'Values in {0} list/array must be data type {1}. (Current type: {2})'.format( \
-                                                                            'iquvF', 'float', np.array(iquvF).dtype ) )
-                        raise ValueError( 'Keyword {0} must have length 4. (Current length {1})'.format( 'iquvF', len( list( iquvF ) ) ) )
-                    
-                    # If provided as None, assumes they want iquv0
-                    elif iquvF is None:
-                        self.iquvF = np.array( self.iquv0 )
-                    
-                    # Otherwise, raise error
-                    raise TypeError( 'Keyword {0} must be either a list or NumPy array.'.format('iquvF') )
-                
-                # If *not* provided on call, checks if provided in parameter file
-                elif 'iquvF' in conf:
-                    
-                    # In this case, iquvF = None is a valid response, which makes it a copy of iquv0 
-                    if conf['iquvF'].lower() == 'none':
-                        self.iquvF = np.array( self.iquv0 )
-                    
-                    # Otherwise, it must be a list
-                    else:
-                        iquvF = conf['iquvF'].strip()
-                        if iquvF.startswith('[') and iquvF.endswith(']'):
-                            try:
-                                iquvF = np.array( string_to_list( iquvF, astype = float ) )
-                            except:
-                                raise ValueError( 'Values in {0} list in parameter file must be data type {1}.'.format( \
-                                                                                                        'iquvF', 'float' ) )
-                        
-                            # Checks length
-                            if iquvF.size == 4:
-                                self.iquvF = iquvF
-                            else:
-                                raise ValueError( 'Value of {0} from parameter file must have length 4. (Current length {1})'.format( 
-                                                                                                    'iquvF', iquvF.size ) )
-                        else:
-                            raise ValueError( 'Keyword {0} in parameter file must be a {1}.'.format( 'iquvF', 'list' ) )
-                    
-                # If not provided on call and not in parameter file, default iquvF is iquv0 (already checked)
-                else:
-                    self.iquvF = np.array( self.iquv0 )
-            
-            
-            # Processing betas
-            # If provided directly on call, uses that value
-            if not isinstance( betas, _default_ ):
-                
-                # If provided, it has to be either None, a Float/Integer, or a list/NumPy array
-                # Processes first if specified as None
-                if betas is None:
-                    for key in [ 'betas', 'beta', 'tau', 'dtau' ]:
-                        self.__dict__[ key ] = None
-                
-                # Processes if list or array, checking that contents are float and updating beta, tau, and dtau
-                elif isinstance( betas, np.ndarray ) or isinstance( betas, list ):
-                    try:
-                        self.betas = np.array( betas ).astype(float)
-                        self.update_beta( self.betas[0] )
-                    except:
-                        raise TypeError( 'Contents of list or array provided for {0} must be {1}.'.format( 'betas', 'float' ) )
-                
-                # Otherwise, tries to convert to float
-                else:
-                    try:
-                        self.betas = np.array([ float(betas) ])
-                        self.update_beta( self.betas[0] )
-                    except:
-                        raise TypeError( 'Keyword {0} must be must be a {1}.'.format( 'betas', 'float or list' ) )
-                
-            # If *not* provided on call, checks if provided in parameter file
-            elif 'betas' in conf:
-                
-                # In this case, betas = None is a valid response, processes
-                if conf['betas'].lower() == 'none':
-                    for key in [ 'betas', 'beta', 'tau', 'dtau' ]:
-                        self.__dict__[ key ] = None
-                
-                # Otherwise, tries to check if list or float
-                else:
-                    betas = conf['betas'].strip()
-                    
-                    # Check first if list
-                    if betas.startswith('[') and betas.endswith(']'):
-                        try:
-                            self.betas = np.array( string_to_list( betas, astype = float ) )
-                        except:
-                            raise ValueError( 'Values in {0} list in parameter file must be data type {1}.'.format( \
-                                                                                                    'betas', 'float' ) )
-                        self.update_beta( self.betas[0] )
-                    
-                    # Otherwise, tries to convert to a float
-                    else:
-                        try:
-                            self.betas = np.array([ float(betas) ])
-                        except:
-                            raise TypeError( 'Keyword {0} must be must be a {1}.'.format( 'betas', 'float or list' ) )
-                        self.update_beta( self.betas[0] )
-            
-            # If not provided on call and not in parameter file, default is None
-            else:
-                for key in [ 'betas', 'beta', 'tau', 'dtau' ]:
-                    self.__dict__[ key ] = None
-                        
-            
-            # Processes lastdelta and lastdelta2
-            for key, par in zip( [ 'lastdelta', 'lastdelta2' ], [ lastdelta, lastdelta2 ] ):
-                
-                # If provided directly on call, uses that value
-                if not isinstance( par, _default_ ):
-                    
-                    # Checks if type is None, list, or NumPy array
-                    if par is None:
-                        self.__dict__[key] = par
-                    elif isinstance( par, np.ndarray ) or isinstance( par, list ):
-                        self.__dict__[key] = np.array( par )
-                    else:
-                        raise TypeError( 'Keyword {0} must be must be a {1}. (Current type: {2})'.format( key, \
-                                                                            'list, NumPy array, or None', par.dtype ) )
-                
-                # If *not* provided on call, these values are not available in the par file
-                # If not provided on call, default is None
-                else:
-                    self.__dict__[key] = par.value
-            
-            
-            # Processes endfill
-            # If provided directly on call, uses that value
-            if not isinstance( endfill, _default_ ):
-                
-                # If provided, must be a string, and must be either 'fit' or 'zero'
-                if isinstance( endfill, str ):
-                    if endfill in [ 'fit', 'zero' ]:
-                        self.endfill = endfill
-                    else:
-                        raise ValueError( "Accepted values for keyword {0} are {1}. (Current value: '{2}')".format( \
-                                                                                'endfill', "'fit' or 'zero'", endfill ) )
-                else:
-                    raise TypeError( 'Keyword {0} must be must be a {1}. (Current type: {2})'.format( 'endfill', \
-                                                                                                'str', endfill.dtype ) )
-            
-            # If *not* provided on call, checks if provided in parameter file (and not none in parfile)
-            elif 'endfill' in conf and conf['endfill'].lower() != 'none':
-                endfill = conf['endfill'].lower().strip()
-                if endfill in [ 'fit', 'zero' ]:
-                    self.endfill = endfill
-                else:
-                    raise ValueError( "Accepted values for keyword {0} in parameter file are {1}. (Current value: '{2}')".format( \
-                                                                                'endfill', "'fit' or 'zero'", endfill ) )
-            
-            # If not provided on call and not in parameter file, uses default class value; should be correct type
-            else:
-                self.endfill = endfill.value
-            
-            
-            # Processes trend
-            # If provided directly on call, uses that value
-            if not isinstance( trend, _default_ ):
-                
-                # If provided, must be either a boolean or 'auto' (includes accommodation if True/False provided 
-                #   as string)
-                if isinstance( trend, str ):
-                    if trend.lower() == 'auto':
-                        self.trend = trend.lower()
-                    elif trend.lower() in ['true', 'false']:
-                        self.trend = string_to_bool( trend )
-                    else:
-                        raise ValueError( "Accepted values for keyword {0} are {1}. (Current value: '{2}')".format( \
-                                                                            'trend', "'auto', True, or False", trend ) )
-                
-                # If not a string, must be a boolean
-                elif isinstance( trend, bool ):
-                    self.trend = trend
-                else:
-                    raise TypeError( 'Keyword {0} must be must be a {1}. (Current type: {2})'.format( 'trend', \
-                                                                                            'str or bool', endfill.dtype ) )
-            
-            # If *not* provided on call, checks if provided in parameter file (and not none in parfile)
-            elif 'trend' in conf and conf['trend'].lower() != 'none':
-                trend = conf['trend'].lower().strip()
-                if trend == 'auto':
-                    self.trend = trend
-                elif trend in ['true', 'false']:
-                    self.trend = string_to_bool( trend )
-                else:
-                    raise ValueError( "Accepted values for keyword {0} are {1}. (Current value: '{2}')".format( \
-                                                                            'trend', "'auto', True, or False", trend ) )
-            
-            # If not provided on call and not in parameter file, uses default class value; should be correct type
-            else:
-                self.trend = trend.value
-                
-                                                           
-            
-            
-            
+        # If betas is an array, sets beta, tau, and dtau attributes based on first value in array
+        if isinstance( self.betas, np.ndarray ):
+            self.update_beta( self.betas[0] )
         
-        
-            
-        #### Sets some additional attributes ####
-        
-        
-        
-        # Sets boolean saying that far_coeff has not (yet) been calculated by calc_far_coeff
-        self.fccalc = False
-        
-        # Begins by preemptively calculating sin and cos theta and sin and cos of 2 phi
-        self.sintheta = sin(self.theta)
-        self.costheta = cos(self.theta)
-        self.sintwophi = sin(2.*self.phi)
-        self.costwophi = cos(2.*self.phi)
+        # If betas is None, sets beta, tau, and dtau attributes
+        elif self.betas is None:
+            self.beta = None
+            self.tau  = None
+            self.dtau = None
     
     
     ### Main functions used by the typical user ###
@@ -1122,36 +332,8 @@ class faraday:
         
         Overwrites self.far_coeff.
         """
-        
-        # First checks if mode is cm
-        if mode == 'cm':
-            
-            # If in cm mode, converts to SI
-            ne = ne * 10.**6
-            P0 = P0 * 10.**6
-        
-        # Sets values for necessary constants
-        e_charge = 1.6021766208 * 10.**-19    # Elementary charge in C
-        E0 = 8.854187817620 * 10.**-12        # Vacuum permittivity in F/m
-        me = 9.10938356 * 10.**-31            # Electron mass in kg
-        c = 2.99792458 * 10.**8               # Speed of light in m/s
-        
-        # Calculates small w from big W 
-        w = self.W * c / ( 2.*pi*freq0 )     # Width parameter in velocity space in m/s
-        
-        # Uses resulting values to calculate
-        CONSTS = ( 8. * e_charge**3 * pi**.5 ) / ( 3. * E0 * me**2 * c**4 )
-        PARS = ( ne * freq0 * Gam * w * B ) / ( A0 * P0 )
-        self.far_coeff = CONSTS * PARS
-        
-        # Saves info for writing simulation description file
-        self.fccalc = True     # Boolean saying that far_coeff was calculated by this function
-        self.ne = ne
-        self.P0 = P0
-        self.freq0 = freq0
-        self.Gamma = Gam
-        self.B = B
-        self.A0 = A0
+        # Uses _maser_base_ class method, but hands it the doppler width, W, from the attribute
+        super().calc_far_coeff( ne, freq0, Gam, B, A0, P0, self.W, mode=mode )
         
     def run( self, maxiter=100, sim_desc = True ):
         """
@@ -1168,7 +350,7 @@ class faraday:
         # If the output path doesn't exist already, it creates it
         if not os.path.exists(path):
             os.makedirs(path)
-        print('FARADAY:  Output Path', path )
+        print('PRISM.MASER:  Output Path', path )
         
         # Writes sim description file if requested
         if sim_desc:
@@ -1199,7 +381,7 @@ class faraday:
             
             # Prints feedback if requested
             if self.verbose  == True:
-                print('FARADAY: Beginning iteration {0} with beta={1}...'.format(b, self.beta ))
+                print('PRISM.MASER: Beginning iteration {0} with beta={1}...'.format(b, self.beta ))
             
             # If the trend fitting is 'auto', calculates residual for both offsets if possible
             if self.trend == 'auto':
@@ -1248,7 +430,7 @@ class faraday:
             # Root finding! Finds what values of self.detlas (the dimensionless inversions) 
             #     constitute a solution
             try:
-                #print('FARADAY: Input delta data type ',end=" ")
+                #print('PRISM.MASER: Input delta data type ',end=" ")
                 #print(self.deltas.dtype)
                 deltas_new = optimize.newton_krylov( self.inversion_resid, initdelta, maxiter=maxiter, \
                                                           f_tol = self.ftol, verbose=self.verbose )
@@ -1266,9 +448,9 @@ class faraday:
             
             # Prints feedback if requested
             if self.verbose == True:
-                print('FARADAY: Iteration {0} with beta={1} Complete.'.format(b, self.beta))
-                print('FARADAY: Output data type', deltas_new.dtype)
-                print('FARADAY: Writing output to file...')
+                print('PRISM.MASER: Iteration {0} with beta={1} Complete.'.format(b, self.beta))
+                print('PRISM.MASER: Output data type', deltas_new.dtype)
+                print('PRISM.MASER: Writing output to file...')
             
             # Saves resulting deltas with write_deltas method
             self.write_deltas(self.beta, deltas_new, ext='fits')
@@ -1746,7 +928,7 @@ class faraday:
         self.dtau = self.tau[1] - self.tau[0]
             
     
-    def readin(self, beta, ext='txt', updatepars = False): 
+    def readin(self, beta, ext='txt', updatepars = False ): 
         """
         Program to read in files generated by iterative root finding in __init__ function.
         
@@ -1765,9 +947,9 @@ class faraday:
         if ext == 'txt':
         
             # Determines path names for each delta using desired extension
-            dminus_path = '{0}FaradayOut_beta{1}_dminus.{2}'.format(self.outpath, beta, ext )
-            dzero_path  = '{0}FaradayOut_beta{1}_dzero.{2}'.format(self.outpath, beta, ext )
-            dplus_path  = '{0}FaradayOut_beta{1}_dplus.{2}'.format(self.outpath, beta, ext )
+            dminus_path = '{0}{1}_beta{2}_dminus.{3}'.format(self.outpath, self.filename, beta, ext )
+            dzero_path  = '{0}{1}_beta{2}_dzero.{3}'.format(self.outpath, self.filename, beta, ext )
+            dplus_path  = '{0}{1}_beta{2}_dplus.{3}'.format(self.outpath, self.filename, beta, ext )
         
             # Reads in minus file
             dminus = np.genfromtxt( dminus_path )
@@ -1782,7 +964,7 @@ class faraday:
         elif ext == 'fits':
         
             # Determines path names for single fits file
-            outpath = '{0}FaradayOut_beta{1}.{2}'.format(self.outpath, beta, ext )
+            outpath = '{0}{1}_beta{2}.{3}'.format(self.outpath, self.filename, beta, ext )
             
             # Opens fits file for reading
             hdu = fits.open( outpath )
@@ -1888,13 +1070,13 @@ class faraday:
         
             # Creates path for output for delta minus, 0, and plus
             if not broken:
-                outpath_minus = '{0}FaradayOut_beta{1}_dminus.{2}'.format(self.outpath, self.beta, ext )
-                outpath_zero  = '{0}FaradayOut_beta{1}_dzero.{2}'.format(self.outpath, self.beta, ext )
-                outpath_plus  = '{0}FaradayOut_beta{1}_dplus.{2}'.format(self.outpath, self.beta, ext )
+                outpath_minus = '{0}{1}_beta{2}_dminus.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath_zero  = '{0}{1}_beta{2}_dzero.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath_plus  = '{0}{1}_beta{2}_dplus.{3}'.format(self.outpath, self.filename, self.beta, ext )
             else:
-                outpath_minus = '{0}FaradayOut_beta{1}_dminus_BROKEN.{2}'.format(self.outpath, self.beta, ext )
-                outpath_zero  = '{0}FaradayOut_beta{1}_dzero_BROKEN.{2}'.format(self.outpath, self.beta, ext )
-                outpath_plus  = '{0}FaradayOut_beta{1}_dplus_BROKEN.{2}'.format(self.outpath, self.beta, ext )
+                outpath_minus = '{0}{1}_beta{2}_dminus_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath_zero  = '{0}{1}_beta{2}_dzero_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath_plus  = '{0}{1}_beta{2}_dplus_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
             
             # Writes output to text file with numpy savetxt
             np.savetxt(outpath_minus,deltas[:,:,0],fmt='%.18f')
@@ -1904,19 +1086,19 @@ class faraday:
             # Prints feedback if requested
             if self.verbose == True:
                 print('Done.')
-                print('FARADAY: Output files written:')
-                print('FARADAY:     {0}'.format(outpath_minus))
-                print('FARADAY:     {0}'.format(outpath_zero))
-                print('FARADAY:     {0}'.format(outpath_plus))
+                print('PRISM.MASER: Output files written:')
+                print('PRISM.MASER:     {0}'.format(outpath_minus))
+                print('PRISM.MASER:     {0}'.format(outpath_zero))
+                print('PRISM.MASER:     {0}'.format(outpath_plus))
         
         # Writing fits file if requested
         elif ext == 'fits':
             
             # Creates single path for output for delta minus, 0, and plus
             if not broken:
-                outpath = '{0}FaradayOut_beta{1}.{2}'.format(self.outpath, self.beta, ext )
+                outpath = '{0}{1}_beta{2}.{3}'.format(self.outpath, self.filename, self.beta, ext )
             else:
-                outpath = '{0}FaradayOut_beta{1}_BROKEN.{2}'.format(self.outpath, self.beta, ext )
+                outpath = '{0}{1}_beta{2}_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
             
             # Makes primary HDU with no data
             prime_hdu = fits.PrimaryHDU()
@@ -1970,7 +1152,7 @@ class faraday:
             
             # Prints feedback if requested
             if self.verbose == True:
-                print('FARADAY: Output file {0} written.'.format( outpath ) )
+                print('PRISM.MASER: Output file {0} written.'.format( outpath ) )
     
     def write_desc(self, path):
         """
@@ -3616,6 +2798,1123 @@ class faraday:
 
 
 
+############################# Object class for parameter set with varying theta #############################
+
+
+class maser_v_theta(_maser_base_):
+    def __init__(self, parfile = None, thetas = _default_( None ), theta_precision = _default_( 1 ), \
+                       units = _default_('degrees'), outpaths = _default_(None), **kwargs):
+        """
+        Object for calculating the dimensionless population inversions for a given parameter set
+        *as a function of theta*. 
+        
+        Generates one maser class object for each value of theta provided, and stores them in the dictionary
+        attribute self.masers, with the value of theta as the dictionary key (rounded to the specified 
+        precision).
+        
+        Optional Parameters:
+            
+            parfile         String or None
+                                
+                                [ Default = None ]
+                                
+                                If provided, gives the path and file name (from current directory) of
+                                a parameter file containing values for any of the keywords accepted 
+                                by this object class initialization. Values in this parameter file 
+                                will override any default values. 
+                                
+                                Parameter file ingestion also allows the specification of the
+                                omegabar array by min, max, and stepsize, as well as the
+                                specification of tau0 by number of resolution elements (both of which
+                                are not currently supported when set explicitly on object 
+                                initialization.)
+            
+            thetas          List or NumPy Array of floats (or None)
+                                
+                                [ Default = None ]
+            
+                                List of values for theta (in the units specified by the units keyword) 
+                                for which to generate a maser object with the specified other parameters.
+                                
+                                Can also be read in from the parameter file, but must be under the section
+                                header '[MASER_V_THETA CLASS]'. To read in from the parameter file, enter
+                                None on object initialization and specify a parfile with the desired
+                                value. 
+                                
+                                Note: This parameter MUST be specified either directly on object 
+                                initialization or from a parameter file.
+                                
+            theta_precision Integer
+                                
+                                [ Default = 1 ]
+                                
+                                The precision to which thetas values will be rounded when used as keys 
+                                for the masers dictionary attribute. (Keep in mind, these values will be
+                                in the same units used on object initialization.)
+            
+            units           String: 'degrees' (or 'deg' or 'd') OR 'radians' (or 'rad' or 'r')
+                                
+                                [ Default = 'degrees' ]
+                                
+                                The units in which the thetas values are provided. The masers dictionary
+                                attribute will use the values corresponding to these units, but they
+                                they will be converted to radians for initializing the individual maser
+                                objects.
+            
+            outpaths        List of Strings
+                                
+                                [ Default = None ]
+                                
+                                The output paths to which each of the thetas solutions will be mapped.
+                                If provided, must be the same length as thetas. If not provided, will
+                                be generated based on the thetas values provided.
+            
+            **kwargs        Any additional keyword arguments will be passed directly on to the 
+                            initialization of every maser object.
+        
+        
+        Object attributes:
+            
+            All attributes set by _maser_base_ class, plus:
+            
+            self.thetas             NumPy Array
+                                
+                                        Otherwise, as entered and rounded to the precision in 
+                                        thetas_precision.
+            
+            self.theta_precision    Integer
+                                        
+                                        As entered
+            
+            self.units              String
+                                        
+                                        As entered
+            
+            self.masers             Dictionary
+                                
+                                        Keys are the values listed in thetas, and the values are the
+                                        corresponding maser objects.
+            
+        """
+        
+        
+        
+        
+        #### Uses _maser_base_ initialization to load parfile (if any) and the following attributes:
+        ####     phi, n, outpath, far_coeff, etapm, alphapm, cloud, betas, resume, lastdelta, verbose, ftol, filename,
+        ####     endfill, trend, lastdelta2
+        ####     + fccalc, sintwophi, costwophi
+        #### Saves config file as attribute conf, name of parfile as attribute parfile, and name of base section in
+        ####     config file as attribute sect
+        super().__init__( parfile = parfile, ignore = ['theta'], **kwargs)
+        
+            
+        
+        #### Processing keys for this class specifically
+        sect = 'MASER_V_THETA CLASS'
+        
+        
+        
+        
+        #### Sets up thetas attribute with rounding
+        
+        # Sets the precision for theta attribute
+        self.theta_precision = self._process_key_( 'theta_precision', theta_precision, self.conf[sect], \
+                                                        allowed = { int: None }, convert = True, ignore_none = True  )
+                                                        
+        
+        # Checks data type of thetas - list or numpy array; if it's a single value, sets but prints warning
+        if isinstance( thetas, float ) or isinstance( thetas, int):
+            print('Warning: The maser_v_theta class is intended for comparison of maser class objects with different values\n' + \
+                  '         of theta and otherwise identical parameters. For a single parameter set, recommend using the\n' + \
+                  '         maser class, instead.')
+            thetas = np.array([ round(float(thetas),theta_precision), ])
+        self.thetas = self._process_key_( 'thetas', thetas, self.conf[sect], \
+                                        allowed = { np.ndarray: [float, None] }, convert = True, ignore_none = True  )
+        if self.thetas is None:
+            raise ValueError( 'Keyword thetas must be provided either on call or in parameter file.' )
+        
+        # Rounds all values in array
+        self.thetas = np.array([ round(x, self.theta_precision ) for x in self.thetas ])
+            
+        
+        #### Checking and saving units
+        self.units = self._process_key_( 'units', units, self.conf[sect], \
+                    allowed = { str: ['radians','rad','r','degrees','deg','d'] }, convert = False, ignore_none = True  )
+        
+        
+        #### Outpaths array
+        self.outpaths = self._process_key_( 'outpaths', outpaths, self.conf[sect], \
+                        allowed = OrderedDict([ (list, [str, self.thetas.size]), (None,None) ]), \
+                        convert = False, ignore_none = True  )
+        if self.outpaths is None:
+            if self.units in ['degrees','deg','d']:
+                ndigits = self.theta_precision + 2
+            else:
+                ndigits = self.theta_precision + 1
+            path_template = '{{0}}theta{{1:0>{0}}}'.format(ndigits)
+            self.outpaths = [ path_template.format( self.outpath, round(th * 10**self.theta_precision) ) for th in self.thetas ]
+        
+        
+        #### Makes masers dictionary and populates
+        self.masers = {}
+        
+        # Makes sure there is no 'theta' key in the **kwargs
+        for key in ['theta', 'outpath']:
+            if key in kwargs:
+                del kwargs[key]
+        
+        # Makes array of theta values in radians corresponding to each value in thetas; if units are radians, this 
+        #   is identical to the self.thetas array
+        if self.units in ['degrees','deg','d']:
+            thetas_radians = self.thetas * pi / 180.
+        else:
+            thetas_radians = self.thetas.copy()
+        
+        # theta value in self.thetas already rounded
+        for i, theta in enumerate(self.thetas):
+            
+            # Makes maser object
+            self.masers[ theta ] = maser( parfile = parfile, theta = thetas_radians[i], outpath = self.outpaths[i], **kwargs )
+        
+        
+        #### Some extra work on betas attribute, setting beta, tau, and dtau
+        
+        # If betas is an array, sets beta, tau, and dtau attributes based on first value in array
+        if isinstance( self.betas, np.ndarray ):
+            self.update_beta( self.betas[0] )
+        
+        # If betas is None, sets beta, tau, and dtau attributes
+        elif self.betas is None:
+            self.update_beta( None )
+        
+    def calc_far_coeff(self, ne, freq0, Gam, B, A0, P0, mode='cm' ):
+        """
+        Calculates the faraday coefficient, gamma_QU/cos(theta) given:
+            ne      = electron density [ cm^-3 or m^-3 ]
+            freq0   = rest frequency of the line [ Hz ]
+            Gamma     = loss rate [ s^-1 ]
+            B       = magnetic field strength [Gauss]
+            A0      = Einstein A coefficient [ s^-1 ]
+            P0      = pump rate into the 0 state [cm^-3 s^-1 or m^-3 s^-1 ]
+        Also uses the Doppler width in Hz given in object initialization.
+        
+        Keyword mode can be set to 'cm' or 'm' to specify units of the given ne and P0 values.
+        Default is 'cm'. If set to 'cm', these values will be converted to SI prior to calculation.
+        
+        Overwrites self.far_coeff.
+        """
+        # Uses _maser_base_ class method, but hands it the doppler width, W, from the attribute
+        super().calc_far_coeff( ne, freq0, Gam, B, A0, P0, self.W, mode=mode )
+        
+        # Iterates the new faraday coeff values down to the individual maser objects
+        for theta in self.thetas:
+            for key in ['far_coeff','fccalc','ne','P0','freq0','Gamma','B','A0']:
+                self.masers[ theta ].__dict__[key] = self.__dict__[key]
     
+    def readin(self, beta, as_attr, ext='txt', updatepars = False ): 
+        """
+        Program to read in files generated by iterative root finding for each maser object in the masers 
+        dictionary attribute and saves them as an object attribute of the individual maser objects of 
+        name as_attr. 
+        
+        For example, to load the beta = 2.0 delta arrays (saved as fits files) as the lastdelta
+        attributes for each object, run
+            
+            self.readin( 2.0, 'lastdelta', ext='fits', updatepars = False )
+        
+        Required Parameters:
+            
+            beta            Float
+                                
+                                Value or an array of total optical depths for the cloud. Unitless.
+                                Indicates which solution should be read in from the output path.
+            
+            as_attr         String
+                                
+                                The name of the attribute of each maser object in the masers dictionary
+                                to which the corresponding deltas array will be saved.
+            
+        Optional Parameters:
+            
+            ext             String ('txt' or 'fits')
+                                
+                                [ Default = 'txt' ]
+                                
+                                The extension of the file to be read in.
+                                
+                                Recommend: 'fits'
+            
+            updatepars      Boolean
+                                
+                                [ Default = False ]
+                                
+                                Only used if ext = 'fits'. If set to True, will read the additional
+                                parameters saved to the fits file and saves them to all of the 
+                                corresponding object attributes for each maser object.
+                                
+        """
+        
+        # Makes sure . not provided in requested extension
+        if ext.startswith('.'):
+            ext = ext[1:]
+        
+        
+        # Starts by iterating through all theta values
+        for theta in self.thetas:
+            
+            # Reading in if text file
+            if ext == 'txt':
+        
+                # Determines path names for each delta using desired extension
+                dminus_path = '{0}{1}_beta{2}_dminus.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, beta, ext )
+                dzero_path  = '{0}{1}_beta{2}_dzero.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, beta, ext )
+                dplus_path  = '{0}{1}_beta{2}_dplus.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, beta, ext )
+        
+                # Reads in files
+                dminus = np.genfromtxt( dminus_path )
+                dzero  = np.genfromtxt( dzero_path )
+                dplus  = np.genfromtxt( dplus_path )
+            
+        
+            # Reading in if fits file
+            elif ext == 'fits':
+        
+                # Determines path names for single fits file
+                outpath = '{0}{1}_beta{2}.{3}'.format(self.masers[theta].outpath, self.filename, beta, ext )
+            
+                # Opens fits file for reading
+                hdu = fits.open( outpath )
+            
+                # Gets delta arrays from extensions
+                dminus = hdu[1].data
+                dzero  = hdu[2].data
+                dplus  = hdu[3].data
+            
+                # Updates object attributes from header if updatepars requested
+                # Does not overwrite outpath, verbose, resume, trend, lastdelta, or lastdelta2.
+                if updatepars:
+                
+                    # Sets aside 0-ext header for easy ref
+                    hdr = hdu[0].header
+                
+                    # Reconstruct omegabar array from header keys. Assumes omegabar is centered on omega_0
+                    AFbins = hdr['AFbins']
+                    dAF = hdr['AFres']
+                    Nplus = ( AFbins - 1 ) / 2
+                    self.masers[theta].omegabar = np.linspace( -Nplus, Nplus, AFbins ).astype(np.longdouble) * dAF
+                
+                    # Reconstructs tau0 assuming tau0 is fraction of cloud transversed from 0 to 1
+                    self.masers[theta].tau0 = np.linspace( 0, 1, hdr['taubins'] ).astype(np.longdouble)
+                
+                    # Retrieves theta
+                    self.masers[theta].theta = hdr['theta']
+                
+                    # Reconstructs iquv0
+                    self.masers[theta].iquv0 = np.array([ hdr['i0'], hdr['q0'], hdr['u0'], hdr['v0'] ])
+                
+                    # Sets W, k, phi, and farcoeff directly
+                    self.masers[theta].W = hdr['Doppler']
+                    self.masers[theta].k = hdr['k']
+                    self.masers[theta].phi = hdr['phi']
+                    self.masers[theta].far_coeff = hdr['farcoeff']
+                
+                    # Sets eta p/m and alpha p/m
+                    self.masers[theta].etap = hdr['etap']
+                    self.masers[theta].etam = hdr['etam']
+                    self.masers[theta].alphap = hdr['alphap']
+                    self.masers[theta].alpham = hdr['alpham']
+                
+                    # Saves n and endfill
+                    self.masers[theta].n = hdr['nexp']
+                    self.masers[theta].endfill = hdr['endfill']
+                
+                    # Sets cloud and ray2 stuff
+                    self.masers[theta].cloud = hdr['cloud']
+                    if self.masers[theta].cloud == 2:
+                        self.masers[theta].iquvF = np.array([ hdr['iF'], hdr['qF'], hdr['uF'], hdr['vF'] ])
+                    else:
+                        self.masers[theta].iquvF = None
+                
+                    # Saves beta and ftol
+                    self.masers[theta].ftol = hdr['ftol']
+                
+                    # Gets fcalc info if in the header
+                    if 'ne' in hdr.keys():
+                        self.masers[theta].fccalc = True
+                        self.masers[theta].ne = hdr['ne']
+                        self.masers[theta].P0 = hdr['P0']
+                        self.masers[theta].freq0 = hdr['AF0']
+                        self.masers[theta].Gamma = hdr['Gamma']
+                        self.masers[theta].B = hdr['B']
+                        self.masers[theta].A0 = hdr['A0']
+                    
+                    # Otherwise, assumes fccoeff set manually
+                    else:
+                        self.masers[theta].fccalc = False
+                
+                    # Updates sin and cos
+                    self.masers[theta].sintheta = sin(self.masers[theta].theta)
+                    self.masers[theta].costheta = cos(self.masers[theta].theta)
+                    self.masers[theta].sintwophi = sin(2.*self.masers[theta].phi)
+                    self.masers[theta].costwophi = cos(2.*self.masers[theta].phi)
+            
+                # Closes fits file
+                hdu.close()
+            
+            
+            # Updates beta
+            self.update_beta( float(beta) )
+        
+            # Sets as requested attribute
+            self.masers[theta].__dict__[as_attr] = np.dstack(( dminus, dzero, dplus ))
     
+    def update_beta( self, beta ):
+        """
+        Updates beta value (i.e. the total optical depth of the cloud multiplied by tau0).
+        
+        Updates object attributes self.beta, self.tau, and self.dtau.
+        """
+        
+        if beta is not None:
+        
+            # Saves new beta value as object attribute beta
+            self.beta = beta
+        
+            # Scales tau array appropriately
+            self.tau = self.tau0 * self.beta
     
+            # Determines the spacing in tau
+            self.dtau = self.tau[1] - self.tau[0]
+        
+        else:
+            self.beta = None
+            self.tau  = None
+            self.dtau = None
+        
+        # Sets for all lower level maser objects
+        for theta in self.thetas:
+            for key in ['beta','tau','dtau']:
+                self.masers[ theta ].__dict__[key] = self.__dict__[key]
+    
+
+########################### Utility base class for par setting and faraday calc ############################
+
+class _maser_base_:
+    def __init__( self, parfile = None, ignore = [], \
+                    omegabar = _default_( None ), tau0 = _default_( None ), theta = _default_( None ), \
+                    iquv0 = _default_( None ), W = _default_( None ), k = _default_( None ), \
+                    phi = _default_( 0.0 ), n = _default_( 50 ), outpath = _default_( '' ), \
+                    far_coeff = _default_( 0.0 ), etapm = _default_( 1.0 ), alphapm = _default_( 1.0 ), \
+                    cloud = _default_( 1 ), iquvF = _default_( None ), \
+                    betas = _default_( None ), resume = _default_( False ), lastdelta = None, \
+                    verbose = _default_( True ), ftol = _default_( 6e-10 ), filename = _default_( 'FaradayOut' ), \
+                    endfill = _default_( 'zero' ), trend = _default_( False ), lastdelta2 = None):
+        """
+        Base class for handling parameters of maser and maser_v_theta. 
+        
+        Does not have 'beta', 'tau', 'dtau' attributes or the associated method to set them, self.update_beta.
+        """
+        
+        # Does not include required parameters, iquvF
+        
+        # Section name of the parameter file, hard coded
+        sect = 'MASER CLASS'
+        self.sect = sect
+        self.parfile = parfile
+        
+        # If parameter file is provided, reads
+        if parfile is not None:
+            self.conf = self._read_par_file_(parfile)
+            
+            # Checks that section is present in the parameter file
+            if sect not in self.conf.sections():
+                raise ValueError( 'Section {0} not found in file {1}'.format( sect, parfile ) )
+                
+        # If not provided, sets as dictionary with section name as None
+        else:
+            self.conf = { sect: None }
+        
+        
+        
+        
+        
+        
+        ### Setting a number of defaultable parameters as attributes with possible specification in par file ###
+        
+        
+        
+        ## Parameter omegabar -- NumPy array, required, can also be set by omegabar_min, omegabar_max, d_omegabar
+        if 'omegabar' not in ignore:
+            self.omegabar = self._process_key_( 'omegabar', omegabar, self.conf[sect], \
+                                allowed = { np.ndarray: [np.longdouble, None] }, convert = False , ignore_none = True  )
+            
+            # If omegabar is not set, checks for omegabar_min, omegabar_max, d_omegabar; all longdouble, conv allowed
+            if self.omegabar is None:
+                omegabar_min = self._process_key_( 'omegabar_min', _default_(None), self.conf[sect], \
+                                                       allowed = { np.longdouble : None }, convert = True , ignore_none = True  )
+                omegabar_max = self._process_key_( 'omegabar_max', _default_(None), self.conf[sect], \
+                                                       allowed = { np.longdouble : None }, convert = True , ignore_none = True  )
+                d_omegabar   = self._process_key_( 'd_omegabar'  , _default_(None), self.conf[sect], \
+                                                       allowed = { np.longdouble: None }, convert = True , ignore_none = True  )
+                if None not in (omegabar_min, omegabar_max, d_omegabar):
+                    self.omegabar = np.arange( omegabar_min, omegabar_max, d_omegabar, dtype = np.longdouble )
+                else:
+                    print(omegabar_min, omegabar_max, d_omegabar)
+                    raise ValueError( 'Keyword omegabar must be provided either on call or in parameter file either directly or\n' + \
+                                        '    through the combination of (omegabar_min, omegabar_max, d_omegabar).' )
+        
+        
+        ## Parameter tau0 -- NumPy array, required, can also be set by taures
+        if 'tau0' not in ignore:
+            self.tau0 = self._process_key_( 'tau0', tau0, self.conf[sect], \
+                                allowed = { np.ndarray: [np.longdouble, None] }, convert = False , ignore_none = True  )
+            
+            # If tau0 is not set, checks for taures; int, conv allowed
+            if self.tau0 is None:
+                taures = self._process_key_( 'taures', _default_(None), self.conf[sect], \
+                                                       allowed = { int: None }, convert = True , ignore_none = True  )
+                if taures is not None:
+                    self.tau0 = np.linspace( 0, 1, taures, dtype = np.longdouble )
+                else:
+                    raise ValueError( 'Keyword tau0 must be provided either on call or in parameter file either directly or\n' + \
+                                '    through taures.' )
+            
+        
+        ## Parameter iquv0 -- NumPy array of longdouble, length 4, required
+        if 'iquv0' not in ignore:
+            self.iquv0 = self._process_key_( 'iquv0', iquv0, self.conf[sect], \
+                                allowed = { np.ndarray: [np.longdouble, 4] }, convert = False , ignore_none = True  )
+            if self.iquv0 is None:
+                raise ValueError( 'Keyword iquv0 must be provided either on call or in parameter file.' )
+            
+        
+        ## Parameter theta -- float, required
+        if 'theta' not in ignore:
+            self.theta = self._process_key_( 'theta', theta, self.conf[sect], allowed = { float: None }, \
+                                                                                convert = True , ignore_none = True  )
+            if self.theta is None:
+                raise ValueError( 'Keyword theta must be provided either on call or in parameter file.' )
+            
+            # If theta successfully set, sets sin(theta) and cos(theta)
+            else:
+                self.sintheta = sin(self.theta)
+                self.costheta = cos(self.theta)
+            
+        
+        ## Parameter W -- float, required
+        if 'W' not in ignore:
+            self.W = self._process_key_( 'W', W, self.conf[sect], allowed = { float: None }, \
+                                                                                convert = True , ignore_none = True  )
+            if self.W is None:
+                raise ValueError( 'Keyword W must be provided either on call or in parameter file.' )
+            
+        
+        ## Parameter k -- int, required
+        if 'k' not in ignore:
+            self.k = self._process_key_( 'k', k, self.conf[sect], allowed = { int: None }, \
+                                                                                convert = True , ignore_none = True  )
+            if self.k is None:
+                raise ValueError( 'Keyword k must be provided either on call or in parameter file.' )
+            
+                
+        ## Parameter phi -- float, conversion allowed, can be specified in parfile, none invalid
+        if 'phi' not in ignore:
+            self.phi = self._process_key_( 'phi', phi, self.conf[sect], allowed = { float: None }, \
+                                                                                convert = True , ignore_none = True  )
+        
+            # Calculates sin and cos of 2 phi
+            self.sintwophi = sin(2.*self.phi)
+            self.costwophi = cos(2.*self.phi)
+        
+        
+        ## Parameter n -- integer, conversion allowed, can be specified in parfile, none invalid
+        if 'n' not in ignore:
+            self.n = self._process_key_( 'n', n, self.conf[sect], allowed = { int: None }, convert = True, ignore_none = True )
+        
+        
+        ## Parameter outpath -- string, conversion disabled, can be specified in parfile, none invalid
+        #      If not length-0 string, must end with a '/'
+        if 'outpath' not in ignore:
+            self.outpath = self._process_key_( 'outpath', outpath, self.conf[sect], allowed = { str: None }, \
+                                                                                convert = False, ignore_none = True  )
+            if len( self.outpath ) > 0 and not self.outpath.endswith('/'):
+                self.outpath = '{0}/'.format( self.outpath )
+        
+        
+        ## Parameter far_coeff -- float, conversion allowed, can be specified in parfile, none invalid
+        if 'far_coeff' not in ignore:
+            self.far_coeff = self._process_key_( 'far_coeff', far_coeff, self.conf[sect], allowed = { float: None }, \
+                                                                                convert = True , ignore_none = True  )
+        
+        
+        ## Parameter etap and etam via etapm -- list/array of floats OR single float, conversion allowed, can be 
+        #    specified in parfile, none invalid
+        #  print('Starting etapm...')  # Line for debugging
+        if 'etapm' not in ignore:
+            etapm_temp = self._process_key_( 'etapm', etapm, self.conf[sect], \
+                         allowed = OrderedDict([ (list, [float,2]), (float, None) ]), convert = True , ignore_none = True  )
+            if isinstance( etapm_temp, float ):
+                etapm_temp = [ etapm_temp, etapm_temp ]
+            self.etap = etapm_temp[0]
+            self.etam = etapm_temp[1]
+        
+        
+        ## Parameter alpha and alpham via alphapm -- list/array of floats OR single float, conversion allowed, can be 
+        #    specified in parfile, none invalid
+        #  print('Starting alphapm...')  # Line for debugging
+        if 'alpmapm' not in ignore:
+            alphapm_temp = self._process_key_( 'alphapm', alphapm, self.conf[sect], \
+                         allowed = OrderedDict([ (list, [float,2]), (float, None) ]), convert = True , ignore_none = True  )
+            if isinstance( alphapm_temp, float ):
+                alphapm_temp = [ alphapm_temp, alphapm_temp ]
+            self.alphap = alphapm_temp[0]
+            self.alpham = alphapm_temp[1]
+        
+        
+        ## Parameter cloud -- integer, must be 1 or 2, conversion allowed, can be specified in parfile, none invalid
+        if 'cloud' not in ignore:
+            self.cloud = self._process_key_( 'cloud', cloud, self.conf[sect], allowed = { int: [1,2] }, \
+                                                                                convert = True , ignore_none = True  )
+        
+        
+        ## Parameter iquvF -- len-4 numpy array of floats, only set if cloud is 2
+        if 'iquvF' not in ignore and 'iquv0' not in ignore and 'cloud' not in ignore:
+            if self.cloud == 1:
+                self.iquvF = None
+            elif self.cloud == 2:
+                # Uses _maser_base_ class method to resolve priorities
+                self.iquvF = self._process_key_( 'iquvF', iquvF, self.conf[sect], \
+                         allowed = OrderedDict([ (np.ndarray, [float,4]), (None, None) ]), convert = False , ignore_none = False  )
+            
+                # If value returned is NoneType, assumes that means iquvF = iquv0
+                if self.iquvF is None:
+                    self.iquvF = np.array( self.iquv0 )
+        
+        
+        ## Parameter betas -- list/array, float, or nonetype, conversion allowed, can be specified in parfile, 
+        #    none is valid 
+        #  print('Starting betas...')  # Line for debugging
+        if 'betas' not in ignore:
+            self.betas = self._process_key_( 'betas', betas, self.conf[sect], \
+                         allowed = OrderedDict([ (np.ndarray, [float,None]), (float, None), (None, None) ]), \
+                         convert = True , ignore_none = False )
+            
+            # If betas is single value, converts it to a length-1 numpy array 
+            if isinstance( self.betas, float ):
+                self.betas = np.array([ self.betas ])
+            
+        
+        ## Parameter resume -- boolean, conversion not allowed, can be specified in parfile, none invalid
+        if 'resume' not in ignore:
+            self.resume = self._process_key_( 'resume', resume, self.conf[sect], allowed = { bool: None }, \
+                                                                                convert = False, ignore_none = True  )
+        
+        
+        ## Parameter lastdelta -- numpy array or None; not compatible with config file
+        if 'lastdelta' not in ignore:
+            if lastdelta is not None and not isinstance( lastdelta, np.ndarray ):
+                raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format('lastdelta', \
+                                                                        'NumPy array or NoneType', lastdelta.dtype ) )
+            self.lastdelta = lastdelta
+        
+        
+        ## Parameter verbose -- boolean, conversion not allowed, can be specified in parfile, none invalid
+        if 'verbose' not in ignore:
+            self.verbose = self._process_key_( 'verbose', verbose, self.conf[sect], allowed = { bool: None }, \
+                                                                                convert = False, ignore_none = True  )
+        
+        
+        ## Parameter ftol -- float, conversion allowed, can be specified in parfile, none invalid
+        if 'ftol' not in ignore:
+            self.ftol = self._process_key_( 'ftol', ftol, self.conf[sect], allowed = { float: None }, \
+                                                                                convert = True , ignore_none = True  )
+        
+        
+        ## Parameter filename -- string, conversion disabled, can be specified in parfile, none invalid
+        #    Must have length > 0
+        if 'filename' not in ignore:
+            self.filename = self._process_key_( 'filename', filename, self.conf[sect], allowed = { str: None }, \
+                                                                                    convert = False, ignore_none = True  )
+            if len( self.filename ) == 0:
+                raise ValueError( 'Keyword {0} cannot be empty string'.format( 'filename' ) )
+        
+        
+        ## Parameter endfill -- string, must be 'fit' or 'zero', conversion disabled, can be specified in parfile, 
+        #    none invalid
+        if 'endfill' not in ignore:
+            self.endfill = self._process_key_( 'endfill', endfill, self.conf[sect], allowed = { str: ['fit','zero'] }, \
+                                                                                    convert = False, ignore_none = True  )
+        
+        
+        ## Parameter trend -- bool or string (must be 'auto' if string), conversion enabled, can be specified in parfile,
+        #    none invalid
+        #  print('Starting trend...')  # Line for debugging
+        if 'trend' not in ignore:
+            self.trend = self._process_key_( 'trend', trend, self.conf[sect], \
+                         allowed = OrderedDict([ (bool, None), (str, ['auto']) ]), convert = True , ignore_none = True  )
+        
+        ## Parameter lastdelta2 -- numpy array or None; not compatible with config file
+        if 'lastdelta2' not in ignore:
+            if lastdelta2 is not None and not isinstance( lastdelta2, np.ndarray ):
+                raise ValueError( 'Keyword {0} must be data type {1}. (Current type: {2})'.format('lastdelta2', \
+                                                                        'NumPy array or NoneType', lastdelta2.dtype ) )
+            self.lastdelta2 = lastdelta2
+        
+        
+        # Sets boolean saying that far_coeff has not (yet) been calculated by calc_far_coeff
+        self.fccalc = False
+    
+    def calc_far_coeff(self, ne, freq0, Gam, B, A0, P0, W, mode='cm' ):
+        """
+        Calculates the faraday coefficient, gamma_QU/cos(theta) given:
+            ne      = electron density [ cm^-3 or m^-3 ]
+            freq0   = rest frequency of the line [ Hz ]
+            Gamma     = loss rate [ s^-1 ]
+            B       = magnetic field strength [Gauss]
+            A0      = Einstein A coefficient [ s^-1 ]
+            P0      = pump rate into the 0 state [cm^-3 s^-1 or m^-3 s^-1 ]
+        Also uses the Doppler width in Hz given in object initialization.
+        
+        Keyword mode can be set to 'cm' or 'm' to specify units of the given ne and P0 values.
+        Default is 'cm'. If set to 'cm', these values will be converted to SI prior to calculation.
+        
+        Overwrites self.far_coeff.
+        """
+        
+        # First checks if mode is cm
+        if mode == 'cm':
+            
+            # If in cm mode, converts to SI
+            ne = ne * 10.**6
+            P0 = P0 * 10.**6
+        
+        # Calculates small w from big W 
+        w = W * c / ( 2.*pi*freq0 )     # Width parameter in velocity space in m/s
+        
+        # Uses resulting values to calculate
+        CONSTS = ( 8. * e_charge**3 * pi**.5 ) / ( 3. * E0 * me**2 * c**4 )
+        PARS = ( ne * freq0 * Gam * w * B ) / ( A0 * P0 )
+        self.far_coeff = CONSTS * PARS
+        
+        # Saves info for writing simulation description file
+        self.fccalc = True     # Boolean saying that far_coeff was calculated by this function
+        self.ne = ne
+        self.P0 = P0
+        self.freq0 = freq0
+        self.Gamma = Gam
+        self.B = B
+        self.A0 = A0
+    
+    def _process_key_(self, keyname, keyvalue, confsection, allowed = {}, ignore_none = True, convert = False ):
+        """
+        Utility function to process key values by priority: specified on call --> conf file (if provided) --> default.
+        
+        Can filter for allowed data types and values using allowed dictionary (optional keyword).
+        
+        Required parameters:
+            
+            keyname         String
+                                The name of the parameter as it appears in the config file (if provided). Also used in
+                                error messages.
+                                
+            keyvalue        (Any)
+                                Value of the parameter set on function call. Method will distinguish if it is the
+                                default parameter class or user-specified.
+                                
+            confsection     ConfigParser SectionProxy object, or None
+                                To refer to a config file when the key is not specified directly on call, supply the
+                                section of the relevent config file, as read in by configparser, here, eg:
+                                
+                                    >>> conf = configparser.ConfigParser(inline_comment_prefixes=['#']) 
+                                    >>> conf.read( 'my_config_file.par')
+                                    >>> self._process_key_( keyname, keyvalue, conf['Relevent Section Name'] )
+                                    
+                                If no config file is provided or desired for cross-referencing, enter None.
+        
+        Optional parameters:
+            
+            allowed         Dict or OrderedDict
+                                [ Default = {} ]
+                                Used to check that values provided by user and read from the parameter file (if 
+                                applicable) are the appropriate data types/values for the parameter. Dictionary format
+                                should have the allowed data types as dictionary keys. If only specific values for a
+                                given data type are allowed, then the dictionary entry for that data type will point to
+                                a list or tuple of the allowed values associated with that data type. If any values of
+                                a given data type are allowed, the dictionary entry for that data type will be None.
+                                
+                                For example, to check a keyword that can be either a boolean or a string named 'auto':
+                                
+                                    >>> allowed = { bool: None, str: [ 'auto' ] }
+                                
+                                If there is an order in which the data types should be checked, use an OrderedDict 
+                                instead of a Dict object for allowed:
+                                    
+                                    >>> # If we need to check if a string is None, but it can also be a string
+                                    >>> from collections import OrderedDict
+                                    >>> allowed = OrderedDict()
+                                    >>> allowed[None] = None
+                                    >>> allowed[str]  = None
+                                
+                                If the data type is a list or NumPy array, instead of specific values allowed for the
+                                keyword, the allowed dictionary should point to a length-2 list with the allowed 
+                                data types and length of the list. Either can be specified as None to remove 
+                                constraints. Multiple data types can be specified with nesting, which will be taken in 
+                                priority order:
+                                    
+                                    >>> # To require the value to be a length-4 list of floats
+                                    >>> allowed = { list: [ float, 4 ] }
+                                    >>>
+                                    >>> # To require the value to be list of float or string of any length, with
+                                    >>> #    floats preferred over strings
+                                    >>> allowed = { list: [ ( float, str ), None ] }
+                                
+                                Note: If data type is specified for a list/array, values will be converted, if possible.
+                                
+                                List and NumPy array are considered interchangable for checking data type, but whichever 
+                                is specified in the allowed dictionary is what the item will be returned as.
+                                    
+                                    >>> # The above examples will return a list object
+                                    >>> # To repeat the len-4 list of floats returned as a numpy array
+                                    >>> allowed = { np.ndarray: [ float, 4 ] }
+                                    
+                                Note 1: If no data type is specified for a list/array type object and data is read in 
+                                        from the config file, the data type of the values in the list will be a string.
+                                Note 2: The data type of a numpy array is numpy.ndarray, NOT numpy.array.
+            
+            ignore_none     Boolean 
+                                [ Default = True ]
+                                Whether to treat any parameters set as None in the config file as being unset (True) or
+                                treat None as a viable parameter for the key (False). Only used if a confsection is 
+                                provided.
+            
+            convert         Boolean
+                                [ Default = False ]
+                                Whether to try to convert any user-provided values into the data types, or simply check
+                                if they have the correct data type. This only applies to values provided on object call,
+                                not any read from the config file or built in defaults. Note: If convert is turned on,
+                                and multiple data types are acceptable, you MUST use an OrderedDict for your allowed
+                                values to ensure consistent type conversion.
+            
+        Returns:
+            
+           out_value        The value of the key, as determined by prioritizing on call -> conf file -> default.
+                            Will have one of the data types specified by the allowed dictionary. 
+                                
+        """
+                
+        # Sets output value as empty default; will override if correct data type is found
+        out_value = _default_(None)
+        
+        # First, checks if the key value provided on object initialization was specified explicitly (i.e. is not default)
+        #     If so, just uses that value
+        if not isinstance( keyvalue, _default_ ):
+            
+            # Checks allowed data types and values, if provided
+            if len(allowed.keys()) > 0:
+                
+                # Begins iterating through the data types; if allowed is an OrderedDict, these will be in the specified
+                #   order
+                for allowed_dtype in allowed.keys():
+                    
+                    # Checks if the provided value has that data type
+                    # First, does the single values that are not list/tuple/array
+                    if allowed_dtype not in [list, np.ndarray]:
+                        if not convert or allowed_dtype is None:
+                            if isinstance( keyvalue, allowed_dtype ):
+                            
+                                # Checks any allowed specific values and sets out_value
+                                if allowed[allowed_dtype] is None or ( keyvalue in allowed[allowed_dtype] ):
+                                    out_value = keyvalue
+                                else:
+                                    raise ValueError( "Accepted values for keyword {0} as data type {1} are {2}.\n    (Current value: '{3}')".format( \
+                                        keyname, allowed_dtype.__name__, ', '.join(allowed[allowed_dtype]), keyvalue ) )
+                        
+                        # If conversion is turned on, tries converting to the desired data type
+                        elif convert:
+                            try:
+                                if allowed_dtype is bool and isinstance(keyvalue, str):
+                                    test_conversion = string_to_bool( keyvalue )
+                                else:
+                                    test_conversion = allowed_dtype( keyvalue )
+                            except:
+                                pass
+                            else:
+                                # Checks any allowed specific values and sets out_value
+                                if allowed[allowed_dtype] is None or ( test_conversion in allowed[allowed_dtype] ):
+                                    out_value = test_conversion
+                                else:
+                                    raise ValueError( "Accepted values for keyword {0} as data type {1} are {2}.\n    (Current value: '{3}')".format( \
+                                        keyname, allowed_dtype.__name__, ', '.join(allowed[allowed_dtype]), test_conversion ) )
+                        
+                    # Processes any list type objects down here; checks immediately if the value is a list or array
+                    elif isinstance( keyvalue, list ) or isinstance( keyvalue, np.ndarray ):
+                        
+                        # If no constraints on the list/array, just makes sure that output data type is as requested
+                        if allowed[allowed_dtype] is None or ( len(allowed[allowed_dtype])==2 and list(allowed[allowed_dtype]) == [None,None] ):
+                            if allowed_dtype is list:
+                                out_value = list( keyvalue )
+                            else:
+                                out_value = np.array( keyvalue )
+                        
+                        # If there are constraints on the data type or length, processes
+                        else:
+                            if allowed[allowed_dtype][0] is not None:
+                                
+                                # If only one data type for a list/array is specified, makes that into len-1 list
+                                if not isinstance( allowed[allowed_dtype][0], tuple ) and \
+                                                                not isinstance( allowed[allowed_dtype][0], list ):
+                                    
+                                    allowed[allowed_dtype][0] = [ allowed[allowed_dtype][0] , ]
+                                    
+                                # Iterates through accepted data types, trying to convert
+                                for allowed_list_dtype in allowed[allowed_dtype][0]:
+                                    try:
+                                        test_conversion = np.array( keyvalue ).astype( allowed_list_dtype )
+                                    except:
+                                        pass
+                                    # If the conversion works, checks the length, if any, and saves that as the output 
+                                    #   value and breaks the for loop
+                                    else:
+                                        if isinstance(allowed[allowed_dtype][1],int):
+                                            allowed[allowed_dtype][1] = [ allowed[allowed_dtype][1], ]
+                                        if allowed[allowed_dtype][1] is None or test_conversion.size in allowed[allowed_dtype][1]:
+                                            if allowed_dtype is list:
+                                                out_value = list( test_conversion )
+                                            else:
+                                                out_value = np.array( test_conversion )
+                                        else:
+                                            raise ValueError( 'Keyword {0} list/array must have length {1}. (Current length {2})'.format( \
+                                                            keyname, ', '.join(allowed[allowed_dtype][1]),  test_conversion.size ) )
+                                            
+                                        break
+                                
+                                # If value is a list/array but not one of the allowed data types, raises error
+                                if isinstance( out_value, _default_ ):
+                                    dtnames = [ x.__name__ for x in allowed[allowed_dtype][0] ]
+                                    raise ValueError( 'Values in {0} list/array must be data type {1}.'.format( \
+                                                                        keyname, ', '.join(dtnames) ) )
+                                
+                            # If no constraints on data type for list and there are length constraints, checks
+                            else:
+                                if isinstance(allowed[allowed_dtype][1],int):
+                                    allowed[allowed_dtype][1] = [ allowed[allowed_dtype][1], ]
+                                if np.array(keyvalue).size in allowed[allowed_dtype][1]:
+                                    out_value = allowed_dtype( keyvalue )
+                                else:
+                                    raise ValueError( 'Keyword {0} list/array must have length {1}. (Current length {2})'.format( \
+                                                    keyname, ', '.join(allowed[allowed_dtype][1]),  np.array(keyvalue).size ) )
+                        
+                    # If the data type to be checked is a list or array and the value is not, skips
+                
+                    # At the end of checking a given allowed dictionary entry, breaks the loop if out_value has been
+                    #   successfully set
+                    if not isinstance( out_value, _default_ ):
+                        break
+                
+                # If none of the allowed data types match the value provided, raises an exception
+                if isinstance( out_value, _default_ ):
+                    dtnames = [ x.__name__ for x in allowed.keys() ]
+                    if 'list' in dtnames: 
+                        dtnames.append('ndarray')
+                    elif 'ndarray' in dtnames:
+                        dtnames.append('list')
+                    raise ValueError( 'Acceptable data types for keyword {0} are {1}. (Current type: {2})'.format(keyname, '/'.join(dtnames), keyvalue.dtype ) )
+                
+            # If no constraints on allowed values, just sets and returns
+            else:
+                out_value = keyvalue
+            
+        
+        # If value isn't explicitly provided on class initialization, checks if (1) parameter file section is provided,
+        #   (2) key name appears in the parameter file, and (3) keyword in parameter file isn't set to be ignored by
+        #   being marked as none when none values are being ignored (ignore_none)
+        elif confsection is not None and keyname in confsection and not (ignore_none and confsection[keyname].lower() == 'none') :
+            
+            
+            # Checks allowed data types and values, in order, if provided
+            # Processing here includes converting data type from string to desired type, so some data types need
+            #   different conversion functions
+            if len(allowed.keys()) > 0:
+                val_from_conf = confsection[keyname].strip()
+                for allowed_dtype in allowed.keys():
+                    
+                    # Does lists first; these must start with [ and end with ]
+                    if allowed_dtype in [list, np.ndarray]:
+                        if val_from_conf.startswith('[') and val_from_conf.endswith(']'):
+                            
+                            # If no constraints on the list/array, just makes sure that output data type is as requested
+                            # Values within the list/array will still be strings
+                            if allowed[allowed_dtype] is None or ( len(allowed[allowed_dtype])==2 and list(allowed[allowed_dtype]) == [None,None] ):
+                                if allowed_dtype is list:
+                                    out_value = string_to_list( val_from_conf )
+                                else:
+                                    out_value = np.array( string_to_list( val_from_conf ) )
+                                                
+                            # If there are constraints on the data type, processes
+                            elif allowed[allowed_dtype][0] is not None:
+                            
+                                # If only one data type for a list/array is specified, makes that into len-1 list
+                                if not isinstance( allowed[allowed_dtype][0], tuple ) and \
+                                                                    not isinstance( allowed[allowed_dtype][0], list ):
+                                    allowed[allowed_dtype][0] = [ allowed[allowed_dtype][0] , ]
+                                
+                                # Iterates through accepted data types, trying to convert
+                                for allowed_list_dtype in allowed[allowed_dtype][0]:
+                                    try:
+                                        test_conversion = string_to_list( val_from_conf, astype = allowed_list_dtype )
+                                    except:
+                                        pass
+                                        
+                                    # If the conversion works, checks the length, if any, and saves that as the output 
+                                    #   value and breaks the for loop
+                                    else:
+                                        if isinstance(allowed[allowed_dtype][1],int):
+                                            allowed[allowed_dtype][1] = [ allowed[allowed_dtype][1], ]
+                                        if allowed[allowed_dtype][1] is None or len(test_conversion) in allowed[allowed_dtype][1]:
+                                            if allowed_dtype is list:
+                                                out_value = list( test_conversion )
+                                            else:
+                                                out_value = np.array( test_conversion )
+                                        else:
+                                            raise ValueError( 'Keyword {0} list/array must have length {1} in parameter file. (Current length {2})'.format( \
+                                                            keyname, ', '.join(allowed[allowed_dtype][1]),  test_conversion.size ) )
+                                        break
+                                        
+                                
+                                # If value is a list/array but not one of the allowed data types, raises error
+                                if isinstance( out_value, _default_ ):
+                                    dtnames = [ x.__name__ for x in allowed[allowed_dtype][0] ]
+                                    raise ValueError( 'Values in {0} list/array must be data type {1} in parameter file.'.format( \
+                                                                                        keyname, ', '.join(dtnames) ) )
+                            
+                            # If no constraints on data type for list and there are length constraints, checks
+                            else:
+                                if isinstance(allowed[allowed_dtype][1],int):
+                                    allowed[allowed_dtype][1] = [ allowed[allowed_dtype][1], ]
+                                test_conversion = string_to_list( val_from_conf )
+                                if len(test_conversion) in allowed[allowed_dtype][1]:
+                                    if allowed_dtype is list:
+                                        out_value = list( test_conversion )
+                                    else:
+                                        out_value = np.array( test_conversion )
+                                else:
+                                    raise ValueError( 'Keyword {0} list/array must have length {1} in parameter file. (Current length {2})'.format( \
+                                                    keyname, ', '.join(allowed[allowed_dtype][1]),  len(test_conversion) ) )
+                    
+                    
+                    # Checks datatypes int, float, and numpy longdouble, which can be evaluated from a string
+                    elif allowed_dtype in [int, float, np.longdouble]:
+                        
+                        # Tries to convert
+                        try:
+                            test_conversion = allowed_dtype( eval( val_from_conf ) )
+                        except:
+                            pass
+                        else:
+                            # Checks if there are specific allowable values for this data type
+                            if allowed[allowed_dtype] is None or ( test_conversion in allowed[allowed_dtype] ):
+                                out_value = test_conversion
+                            else:
+                                raise ValueError( "Accepted values for keyword {0} as data type {1} are {2} in parameter file.\n    (Current value: '{3}')".format( \
+                                    keyname, allowed_dtype.__name__, ', '.join(allowed[allowed_dtype]), test_conversion ) )
+                    
+                    
+                    # If data type is a bool, converts with specialized function from utils
+                    elif allowed_dtype is bool:
+                        
+                        # Converts to bool if 'true'/'false' (not case sensitive); if neither, leaves as a string
+                        test_conversion = string_to_bool( val_from_conf )
+                        if isinstance( test_conversion, bool ):
+                            
+                            # Checks if there are specific allowable values for this data type
+                            if allowed[allowed_dtype] is None or ( test_conversion in allowed[allowed_dtype] ):
+                                out_value = test_conversion
+                            else:
+                                raise ValueError( "Accepted values for keyword {0} as data type {1} are {2} in parameter file.\n    (Current value: '{3}')".format( \
+                                    keyname, allowed_dtype.__name__, ', '.join(allowed[allowed_dtype]), test_conversion ) )
+                    
+                    
+                    # If data type is NoneType (ignore_none must be turned off to make it here)
+                    elif allowed_dtype is None and val_from_conf.lower() == 'none':
+                        out_value = None
+                    
+                    
+                    # Any other data types
+                    else:
+                        
+                        # Tries to convert
+                        try:
+                            test_conversion = allowed_dtype( val_from_conf )
+                        except:
+                            pass
+                        else:
+                            # Checks if there are specific allowable values for this data type
+                            if allowed[allowed_dtype] is None or ( test_conversion in allowed[allowed_dtype] ):
+                                out_value = test_conversion
+                            else:
+                                raise ValueError( "Accepted values for keyword {0} as data type {1} are {2} in parameter file.\n    (Current value: '{3}')".format( \
+                                    keyname, allowed_dtype.__name__, ', '.join(allowed[allowed_dtype]), test_conversion ) )
+                    
+                    
+                    # At the end of checking a given allowed dictionary entry, breaks the loop if out_value has been
+                    #   successfully set
+                    if not isinstance( out_value, _default_ ):
+                        break
+                
+                # If none of the allowed data types match the value provided, raises an exception
+                if isinstance( out_value, _default_ ):
+                    dtnames = [ x.__name__ for x in allowed.keys() ]
+                    if 'list' in dtnames: 
+                        dtnames.append('ndarray')
+                    elif 'ndarray' in dtnames:
+                        dtnames.append('list')
+                    raise ValueError( 'Acceptable data types for keyword {0} are {1} in parameter file. (Current value: {2})'.format(keyname, '/'.join(dtnames), val_from_conf ) )
+                    
+            # If no constraints on allowed values and not ignoring, just sets as the output value
+            else:
+                out_value = val_from_conf
+            
+        # If value hasn't been set yet, uses default, which should be value of the _default_ class object provided as
+        #   keyvalue
+        # Note: default class objects assumed to be pre-vetted for validity; not checked for data type/value
+        else:
+            out_value = keyvalue.value
+                    
+        
+        # Returns the output value
+        return out_value
+    
+    def _read_par_file_(self, parfile ):
+        """
+        Checks if a parameter file exists and, if so, reads with configparser.
+        
+        Allows comments prefixed by '#'.
+        
+        Required Parameters:
+            
+            parfile         String
+                                Path/name of the parameter file.
+        
+        Returned:
+            
+            conf            configparser.ConfigParser object
+                                The configuration file in the form of a configparser.ConfigParser object.
+        
+        """
+        
+        # First, checks that the config file exists
+        if not os.path.exists( parfile ):
+            raise FileNotFoundError( 'Parameter file {0} does not exist.'.format(parfile) )
+        
+        # Reads in the config file, allowing for in-line comments with '#'
+        conf = configparser.ConfigParser(inline_comment_prefixes=['#'])
+        successful_files = conf.read( parfile )
+
+        # If no files were successfully read, raises an error
+        if len( successful_files ) == 0:
+            raise ValueError( 'Parsing of config file {0} failed.'.format( parfile ) )
+
+        # Returns config file object
+        return conf
+        
