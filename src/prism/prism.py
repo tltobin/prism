@@ -1,4 +1,4 @@
-# Last updated 4/12/2021
+# Last updated 4/24/2021
 # - Updated maser method, stokes.
 #     - Updated help text for format and clarity.
 #     - Added calculation of mc, ml, and evpa attributes.
@@ -18,6 +18,7 @@
 # - Started adding maser_v_theta plotting methods:
 #     - plot_gkk: written but still need to test
 #     - plot_v_didv: started writing
+
 
 
 
