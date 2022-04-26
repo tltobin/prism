@@ -1,11 +1,4 @@
 # Last updated 4/1/2021
-#     Updates to support for user-generated default parameters for faraday object from config file.
-#         - Creation of _default_ class to differentiate when parameters with useable defaults are specified on call.
-#         - Creation of helper function, string_to_list, to convert a string formatted like '[val1, val2, val3]' into a
-#           list of some specified data type. If the data type is a float, numpy longdouble, or integer, supports
-#           expressions as the individual list entries.
-#         - Creation of helper function, string_to_bool, to convert strings 'true' or 'false' to the associated 
-#           booleans. Not case sensitive.
 
 from glob import glob
 import numpy as np
