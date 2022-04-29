@@ -1,7 +1,3 @@
-# Last updated 4/26/2021
-# Functions from other models/theories for comparison
-# - Added gkk, which calculates and returns the fractional stokes q/i and EVPA for a single value of theta or an array 
-#   of theta.
 
 # Importing
 from math import pi, atan, sin, sqrt
