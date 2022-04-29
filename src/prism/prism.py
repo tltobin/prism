@@ -1,12 +1,9 @@
-# Last updated 4/26/2021
-# - Finished adding (and testing) maser_v_theta plotting methods:
-#     - plot_mlevpa (formerly plot_gkk)
-#         - Added option to overplot gkk functional form
-#     - plot_v_didv
-#     - plot_freq_theta
-#     - plot_freq_tau
-#     - plot_theta_tau
-#     - plot_mlmc
+# Last updated 4/28/2021
+# - Bug fixes:
+#     - Fixed bug in maser.stokes that only affected 2-directional clouds
+# - Additions:
+#     - Maser_v_theta.calc_R and maser_v_theta.read_R
+#     - Wrote maser_v_theta.plot_R but haven't tested yet
 
 
 
@@ -1631,7 +1628,7 @@ class maser(_maser_base_):
             
             # Deletes gamma arrays and GSi now that we're done with them
             del gamma_I, gamma_Q, gamma_U1, gamma_V1, gamma_QU1, gamma_U2, gamma_V2, gamma_QU2, A
-            del GI1i, GQ1i, GU2i, GV2i, GQU2i, GI2i, GQ2i, GU2i, GV2i, GQU2i
+            del GI1i, GQ1i, GU1i, GV1i, GQU1i, GI2i, GQ2i, GU2i, GV2i, GQU2i
             
             
             # Prints test output if verbose
@@ -5156,7 +5153,7 @@ class maser_v_theta(_maser_base_):
             filename        String
                                 Name of the fits file to which the calculated stokes values were saved by
                                 cloud_end_stokes method. Assumed to be in path specified by object attribute
-                                outpath.
+                                outpath for each maser object.
         
         Optional Parameters:
                                 
@@ -5202,6 +5199,369 @@ class maser_v_theta(_maser_base_):
                                                                         theta, self.units, self.thetas[0] ) )
                 print('                                          Value for theta = {0} {1} : {2}    Value for theta = {3} {1} : {4}'.format(\
                                                                         theta, self.units, self.masers[theta].tau_idx, self.thetas[0], self.tau_idx ))
+    
+    def calc_R( self, betas = None, ext = 'fits', saveas = None, overwrite = False, verbose = False ):
+        """
+        Calculates the stimulated emission rate, R, at the end of the cloud for each maser object in 
+        the masers dictionary attribute for one or more given total optical depths. Includes loading 
+        in the deltas object from the output file for that total optical depth for each maser object.
+        
+        The stimulated emission rate, R, in inverse seconds, is either returned as a numpy array with
+        shape (theta, beta)
+        
+        Optional Parameters:
+            
+            betas           Float, List/Array of Floats, or None
+                                [ default = None ]
+                                The value(s) of beta for which R will be calculated. If None are
+                                provided, will calculate for all beta values in object attribute,
+                                betas.set to None, will 
+                                calculate and return R/Gamma. 
+            
+            ext             String ('fits' or 'txt')
+                                [ Default = 'fits' ]
+                                The file extension of the output inversion (deltas) solutions in 
+                                the outpath. All maser objects should use the same file extension.
+            
+            saveas          String or None
+                                [ Default = None ]
+                                If provided as string, will save the calculated stimulated emission
+                                rate, R, to a fits file in the top-level object attribute, outpath,
+                                with the file name given in the string. String name given by saveas 
+                                does not need to end in a '.fits' suffix.
+                                The resulting fits file will have 2 extensions - the 0th extension
+                                contains a header with basic information on the results, the tau bin,
+                                and the values of beta (as the data stored in the extension), while 
+                                the 1st extension contains the data array of calculated R values
+                                in inverse seconds.
+            
+            overwrite       Boolean
+                                [ Default = False ]
+                                Whether to overwrite any existing fits file with the same name when 
+                                creating the output (True) or not (False). Used only if saveas is not
+                                None.
+                                
+            verbose         Boolean
+                                [ default = False ]
+                                Whether to print out progress during calculation.
+        
+        Other Object Attributes Used:
+            
+            theta      The angle between the magnetic field and line of sight in radians.
+            costheta   cos( self.theta )
+            sintheta   sin( self.theta )
+            phi        The sky-plane angle in radians.
+            costwophi  cos( 2 * self.phi )
+            sintwophi  sin( 2 * self.phi )
+            etap       The squared ratio of the + dipole moment to the 0th dipole moment.
+            etam       The squared ratio of the - dipole moment to the 0th dipole moment.
+            omegabar   The array of angular frequencies.
+            k          The number of frequency bins spanned by the Zeeman shift, delta omega
+            
+        Returns:
+            
+            R_theta_beta    NumPy Array
+                                The stimulated emission rate, in inverse seconds, at the cloud end.
+                                2-dimensional array with shape ( number_of_theta, number_of_beta).
+        """
+        
+        #### Processing beta to make sure it's a numpy array ####
+        
+        # If it's not provided, uses object attribute as default
+        if betas is None:
+            betas = self.betas
+        
+        # If it's a list or tuple, turns into a numpy array
+        elif isinstance(betas,list) or isinstance(betas,tuple):
+            betas = np.array( betas )
+        
+        # Otherwise, assumes it's a single value and tries to turn into a length-1 numpy array
+        elif not isinstance( betas, np.ndarray ):
+            betas = np.array([ betas ])
+        
+        
+        
+        
+        
+        
+        #### Iterates through betas and theta values to calculate R ####
+        
+        # Initializes empty 2D array to populate with calculated R values
+        R_theta_beta = np.array([])
+        
+        # Iterates through theta/maser object attributes
+        for theta in self.thetas:
+            
+            # Initializes empty 1D numpy array to populate with R at a given theta as a function of beta
+            R_v_beta = np.array([])
+            if verbose:
+                print('Loading delta and calculating R for theta = {0} {1}...'.format(theta, self.units))
+            
+            # Iterates through beta values and populates R_v_beta array
+            for beta in betas:
+                if verbose:
+                    print( '  -- Beta = {0}'.format(beta) )
+                
+                # Reads in deltas array for beta value and sets as object's deltas attribute
+                self.masers[theta].deltas = self.masers[theta].readin( beta, ext=ext, updatepars=False )
+            
+                # Makes sure that the beta object attributes are up to date
+                self.masers[theta].update_beta( float(beta) )
+            
+                # Calculates the stimulated emission rate and adds to R_v_beta array
+                #     Does not implement Gamma yet.
+                R_v_beta = np.append( R_v_beta, self.masers[theta].calc_R( Gamma = None, verbose = False, sep = False ) )
+            
+            # Once R for all beta values for that theta have been calculated...
+            # Clears out deltas attribute from maser object to conserve memory
+            del self.masers[theta].deltas
+            
+            # Reshapes and adds R_v_beta to R_theta_beta array
+            R_v_beta = R_v_beta.reshape( R_v_beta.size, 1)
+            if R_theta_beta.size > 0:
+                R_theta_beta = np.hstack(( R_theta_beta, R_v_beta ))
+            else:
+                R_theta_beta = np.array( R_v_beta )
+            
+        
+        
+        
+        
+        
+        
+        #### Saves, if requested ####
+        
+        # Saves, if requested
+        if saveas is not None and isinstance( saveas, str ):
+            
+            # Makes path for file to save and makes sure the file name ends in .fits extension
+            savepath = '{0}{1}'.format( self.outpath, saveas )
+            if not savepath.lower().endswith('.fits'):
+                savepath = '{0}.fits'.format(savepath)
+            
+            # Makes primary HDU with no data
+            prime_hdu = fits.PrimaryHDU()
+            
+            # Populates primary header with info these stokes arrays
+            prime_hdu.header['AFmin'] = ( self.omegabar[0+self.k], 'Angular Freq Min for Stokes Arrays [s^-1]' )
+            prime_hdu.header['AFmax'] = ( self.omegabar[-1-self.k], 'Angular Freq Max for Stokes Arrays [s^-1]' )
+            prime_hdu.header['AFres'] = ( self.omegabar[1]-self.omegabar[0], 'Angular Freq Resolution [s^-1]' )
+            prime_hdu.header['AFbins'] = ( self.omegabar.size, 'Total Angular Freq Bins' )
+            prime_hdu.header['AFdata'] = ( self.omegabar.size - 2*self.k, 'Angular Freq Bins for Stokes Data' )
+            prime_hdu.header['k'] = ( self.k, 'Zeeman splitting [bins]' )
+            prime_hdu.header['taures'] = ( self.tau0.size, 'Number of Tau Resolution Bins along LoS' )
+            prime_hdu.header['betaN'] = ( self.betas.size, 'Number of Optical Depths' )
+            prime_hdu.header['betamin'] = ( self.betas[0], 'Min of Optical Depths' )
+            prime_hdu.header['betamax'] = ( self.betas[-1], 'Max of Optical Depths' )
+            prime_hdu.header['gOmega'] = ( 2 * float(self.k) * (self.omegabar[1]-self.omegabar[0]), 'Full Zeeman spliting rate [s^-1]' )
+            
+            
+            # Populates primary header with other info about calculation
+            prime_hdu.header['cloud'] = ( self.cloud, 'number of rays' )
+            prime_hdu.header['Doppler'] = ( self.W, 'Doppler width [s^-1]' )
+            prime_hdu.header['Zeeman'] = ( (self.omegabar[1]-self.omegabar[0])*float(self.k), 'SS Zeeman splitting [s^-1]' )
+            prime_hdu.header['phi'] = ( self.phi, 'Sky angle [rad]' )
+            prime_hdu.header['etap'] = ( self.etap, '|d^+|^2 / |d^0|^2' )
+            prime_hdu.header['etam'] = ( self.etam, '|d^-|^2 / |d^0|^2' )
+            prime_hdu.header['alphap'] = ( self.alphap, 'P^+ / P^0' )
+            prime_hdu.header['alpham'] = ( self.alpham, 'P^- / P^0' )
+            prime_hdu.header['i0'] = ( self.iquv0[0], 'Ray 1 initial Stokes i' )
+            prime_hdu.header['q0'] = ( self.iquv0[1], 'Ray 1 initial Stokes q' )
+            prime_hdu.header['u0'] = ( self.iquv0[2], 'Ray 1 initial Stokes u' )
+            prime_hdu.header['v0'] = ( self.iquv0[3], 'Ray 1 initial Stokes v' )
+            if self.cloud == 2:
+                prime_hdu.header['iF'] = ( self.iquvF[0], 'Ray 2 initial Stokes i' )
+                prime_hdu.header['qF'] = ( self.iquvF[1], 'Ray 2 initial Stokes q' )
+                prime_hdu.header['uF'] = ( self.iquvF[2], 'Ray 2 initial Stokes u' )
+                prime_hdu.header['vF'] = ( self.iquvF[3], 'Ray 2 initial Stokes v' )
+            prime_hdu.header['endfill'] = ( self.endfill, 'Mode for handling freq edges' )
+            prime_hdu.header['farcoeff'] = ( self.far_coeff, '-gamma_qu/cos(theta)' )
+            prime_hdu.header['nexp'] = ( self.n, 'Number of Expansion Terms' )
+            prime_hdu.header['ftol'] = ( self.ftol, 'Tolerance for convergence' )
+            if self.fccalc:
+                prime_hdu.header['ne'] = ( self.ne, 'Electron number density [m^-3]' )
+                prime_hdu.header['AF0'] = ( self.freq0, 'Angular frequency at line center [s^-1]' )
+                prime_hdu.header['Gamma'] = ( self.Gamma, 'Loss rate [s^-1]' )
+                prime_hdu.header['B'] = ( self.B, 'Magnetic field strength [G]' )
+                prime_hdu.header['A0'] = ( self.A0, 'Einstein A coeff [s^-1]' )
+                prime_hdu.header['P0'] = ( self.P0, 'Pi Pump rate [m^-3 s^-1]' )
+            
+            # Saves array of betas values as data of primary hdu
+            prime_hdu.data = betas
+               
+            # Makes HDU for data extension
+            ext1 = fits.ImageHDU( R_theta_beta.astype( np.float64 ) )
+            ext1.name = 'R'
+            
+            # Makes HDU list with each hdu as an extension
+            hdu = fits.HDUList([ prime_hdu, ext1 ])
+            
+            # Writes hdulist to file
+            hdu.writeto( savepath, overwrite = overwrite )
+            
+            # Prints feedback if requested
+            if verbose:
+                print('Stimulated emission file {0} written.'.format( savepath ) )
+            
+        
+        
+        
+        
+        
+        
+        #### Returns, either way ####
+        
+        return R_theta_beta
+            
+    def read_R(self, filename, verbose = True ):
+        """
+        Reads in fits file created by method calc_R using saveas option and returns the stimulated
+        emission rate array as a function of theta and beta.
+        
+        Required Parameters:
+            
+            filename        String
+                                Name of the fits file to which the calculated R values were saved by calc_R
+                                method. Assumed to be in path specified by object attribute outpath.
+        
+        Optional Parameters:
+                                
+            verbose         Boolean
+                                [ Default = True ]
+                                Whether to print feedback to terminal at various stages of the process.
+        
+        Updates Attributes:
+            
+            betas
+        
+        Returns:
+            
+            R_theta_beta    NumPy Array
+                                The stimulated emission rate, in inverse seconds, at the cloud end.
+                                2-dimensional array with shape ( number_of_theta, number_of_beta).
+        
+        Other Functionality:
+            
+            Checks other attributes stored in fits file header against object attributes, and raises a 
+            warning if there is disagreement (but will still run).
+        
+        """
+        
+        # File assumed to be within the outpath
+        filepath = '{0}{1}'.format( self.outpath, filename )
+        if not os.path.exists(filepath):
+            
+            # If file is not in the outpath, checks from current directory
+            if os.path.exists(filename):
+                print('    Warning: File {0} not found in outpath {1}, but found in current directory.'.format(filename, self.outpath))
+                print('             Using file in current directory.')
+                filepath = filename
+            
+            # if file is not in outpath or current directory
+            else:
+                raise FileNotFoundError('Files {0} or {1} not found.'.format(filepath, filename))
+        
+        # Opens file in such a way that it will close automatically when over
+        with fits.open(filepath) as hdu:
+            
+            
+            
+            #### Checks parameters from file against object attributes ####
+            if verbose:
+            
+                # Makes warning string templates
+                warning_temp_line1 = '    MASER.READ_R WARNING:  Parameter {0} in file does not match object attribute.'
+                warning_temp_line2 = '                           File value : {0}    Attribute value : {1}    Diff : {2:.2e}'
+            
+                # Starts with k, since that'll affect the omegabar arrays
+                if hdu[0].header['k'] != self.k:
+                    print( warning_temp_line1.format( 'k' ) )
+                    print( warning_temp_line2.format( hdu[0].header['k'], self.k, hdu[0].header['k'] - self.k ) )
+            
+                # Then checks omegabar values
+                check_dict = OrderedDict([ ( 'AFmin' , self.omegabar[0+self.k] ), \
+                                           ( 'AFmax' , self.omegabar[-1-self.k] ), \
+                                           ( 'AFres' , self.omegabar[1]-self.omegabar[0] ), \
+                                           ( 'AFbins', self.omegabar.size ), \
+                                           ( 'AFdata', self.omegabar.size - 2*self.k ) ])
+                for key in check_dict.keys():
+                    if hdu[0].header[key] != check_dict[key]:
+                        print( warning_temp_line1.format( key ) )
+                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+            
+                # Checks tau and beta values
+                check_dict = OrderedDict([ ( 'taures' , self.tau0.size ), \
+                                           ( 'betaN'  , self.betas.size ), \
+                                           ( 'betamin', self.betas[0] ), \
+                                           ( 'betamax', self.betas[-1] ) ])
+                for key in check_dict.keys():
+                    if hdu[0].header[key] != check_dict[key]:
+                        print( warning_temp_line1.format( key ) )
+                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+            
+                # Checks other values present for all sims
+                check_dict = OrderedDict([ ( 'cloud'   , self.cloud ), \
+                                           ( 'Doppler' , self.W ), \
+                                           ( 'Zeeman'  , (self.omegabar[1]-self.omegabar[0])*float(self.k) ), \
+                                           ( 'phi'     , self.phi ), \
+                                           ( 'etap'    , self.etap ), \
+                                           ( 'etam'    , self.etam ), \
+                                           ( 'alphap'  , self.alphap ), \
+                                           ( 'alpham'  , self.alpham ), \
+                                           ( 'i0'      , self.iquv0[0] ), \
+                                           ( 'q0'      , self.iquv0[1] ), \
+                                           ( 'u0'      , self.iquv0[2] ), \
+                                           ( 'v0'      , self.iquv0[3] ), \
+                                           ( 'endfill' , self.endfill ), \
+                                           ( 'farcoeff', self.far_coeff ), \
+                                           ( 'nexp'    , self.n ), \
+                                           ( 'ftol'    , self.ftol ) ])
+                for key in check_dict.keys():
+                    if hdu[0].header[key] != check_dict[key]:
+                        print( warning_temp_line1.format( key ) )
+                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+            
+                # Checking fcalc values if set for both
+                if 'ne' in hdu[0].header.keys() and self.fcalc:
+                    check_dict = OrderedDict([ ( 'ne'   , self.ne ), \
+                                               ( 'AF0'  , self.freq0 ), \
+                                               ( 'Gamma', self.Gamma ), \
+                                               ( 'B'    , self.B ), \
+                                               ( 'A0'   , self.A0 ), \
+                                               ( 'P0'   , self.P0 ) ])
+                    for key in check_dict.keys():
+                        if hdu[0].header[key] != check_dict[key]:
+                            print( warning_temp_line1.format( key ) )
+                            print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+            
+                # Checking values for 2nd ray if both are bi-directional
+                if hdu[0].header['cloud'] == 2 and self.cloud == 2:
+                    check_dict = OrderedDict([ ( 'iF'      , self.iquvF[0] ), \
+                                               ( 'qF'      , self.iquvF[1] ), \
+                                               ( 'uF'      , self.iquvF[2] ), \
+                                               ( 'vF'      , self.iquvF[3] ) ])
+                    for key in check_dict.keys():
+                        if hdu[0].header[key] != check_dict[key]:
+                            print( warning_temp_line1.format( key ) )
+                            print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+            
+            
+            
+            
+            #### Retrieves other values associated with R calculation ####
+            
+            # Saves array of betas values
+            self.betas = hdu[0].data
+            
+            # Retrieves R_theta_beta
+            R_theta_beta = hdu[1].data
+            
+        # Returns R array 
+        return R_theta_beta
+        
+        
+        
+        
             
     
     ### Functions for plotting figures ###
@@ -6481,7 +6841,7 @@ class maser_v_theta(_maser_base_):
             # Finds index of betamax in betas array
             if betamax in self.betas[:Nbetas]:
                 ibmax = np.where( self.betas == betamax )[0][0]
-            elif beta not in self.betas:
+            elif betamax not in self.betas:
                 err_msg = "MASER_V_THETA.PLOT_THETA_TAU ERROR:    Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
                 raise ValueError(err_msg)
             else:
@@ -7057,7 +7417,337 @@ class maser_v_theta(_maser_base_):
         else:
             P.close()
         
+    def plot_R( self, R_theta_beta, norm = False, aslog = False, betamax = None, plotbetamax = 100.0, \
+                        interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
+        """
+        Plots provided stimulated emission rate, R, vs. theta (x-axis) and total optical depth (y-axis).
         
+        R plotted may be scaled by gOmega (the total Zeeman splitting rate) or Gamma (the loss rate, 
+        must be provided) or plotted on its own. Any of these may be optionally plotted on log scale.
+        
+        Required Parameters:
+            
+            R_theta_beta    2D NumPy Array
+                                The stimulated emission rate, in inverse seconds, at the cloud end.
+                                2-dimensional array with shape ( number_of_theta, number_of_beta ).
+                                Calculated R in each dimension should correspond to the object 
+                                attributes, thetas and betas.
+            
+        Optional Parameters:
+            
+            norm            False, String ('gOmega'), or Float/Integer
+                                [ Default = False ]
+                                Indicates any normalization that occurs to R before plotting. 
+                                If False, no normalization is done.
+                                If 'gOmega', plots R / gOmega, where gOmega is the full width of the
+                                Zeeman splitting (across all substates), calculated as 
+                                2*k*omegabar_bin_width.
+                                If Float or Integer, plots R / Gamma, where Gamma is the loss rate,
+                                and assumes that the value provided for norm is the loss rate, 
+                                Gamma, in inverse seconds.
+            
+            aslog           Boolean True/False
+                                [ Default = False ]
+                                If True, will plot the base-10 log of R (normalized first by any 
+                                value indicated with keyword, norm).
+            
+            betamax         None or Float 
+                                [ Default = None ]
+                                Maximum value of beta to show data for in the plot. If None, plots 
+                                all available data.
+                                
+            plotbetamax     Float or None
+                                [ Default = None ]
+                                Y-limit (optical depth) shown on the plot axes. If None, will be the 
+                                same as betamax. (Only useful if you want to set the y-limit used by
+                                the figure to be the same as other figures despite not having beta up 
+                                to that value for this parameter set.)
+                                
+            interp          String
+                                [ Default = 'cubic' ]
+                                Type of interpolation to use for image re-gridding. Default is 'cubic'. Other 
+                                options are 'linear' and 'nearest'.
+                                
+            subtitle        None or String 
+                                [ Default = None ]
+                                If not None, provided string will be added to title as a second line. Intended 
+                                to be used to indicate faraday polarization values used if not 0.
+                                
+            figname         None or String
+                                [ Default = None ]
+                                If a string is provided, figure will be saved with the provided file path/name. 
+                                Note: this is the path from the working directory, NOT within the outpath of 
+                                the object. 
+                                If None, figure will be shown but not saved.
+            
+            show            Boolean
+                                [ Default = True ]
+                                Whether to show the figure or just close after saving (if figname provided).
+                                Note: If this is set to False, you must set figname to be a string to which
+                                the resulting figure will be saved; otherwise, the plot will disappear unseen.
+                                
+            verbose         Boolean
+                                [ Default = True ]
+                                Whether to print feedback to terminal at various stages of the process.
+        """
+        #### First, checks values ####
+         method_name = 'MASER_V_THETA.PLOT_R'
+        
+        # Makes sure that, if show is False, a figname has been specified
+        if show is False and figname is None:
+            err_msg = "{0}: Setting show = False without specifying a file name for the plot will result in no\n".format(method_name) + \
+                      " "*(12+len(method_name)+2) + \
+                      "figure produced. Please either set show = True or provide a figname for the plot."
+            raise ValueError(err_msg)
+        
+        # Checks if betas attribute exists; thetas must unless deleted since it's created by the init
+        if 'betas' not in self.__dict__.keys():
+            attr_missing_msg  = method_name + ': Object attribute {0} does not exist.'
+            raise AttributeError( attr_missing_msg.format(req_attr) )
+            
+        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the 
+        #    R_theta_beta array
+        Nthetas = self.thetas.size
+        Nbetas  = self.betas.size
+        
+        # Checks that the R_theta_beta is a Numpy Array
+        if not isinstance( R_theta_beta, np.ndarray ):
+            R_type_msg = method_name + ': R_theta_beta must be a NumPy array.'
+            raise TypeError( R_type_msg )
+        
+        # If it is a numpy array, makes sure it's 2-dimensional
+        elif R_theta_beta.ndim != 2:
+            R_type_msg = method_name + ': R_theta_beta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
+            raise ValueError( R_type_msg.format( R_theta_beta.ndim ) )
+        
+        # If it is 2-dimensional, checks the axis sizes, starting with the theta axis
+        elif R_theta_beta.shape[0] != Nthetas:
+            R_shape_theta_msg = method_name + ': Shape of R_theta_beta is not consistent with thetas object attribute.\n' + \
+                                ' '*(12+len(method_name)+2) + \
+                                'R_theta_beta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {3}, {4} ).)'
+            raise ValueError( R_shape_theta_msg.format( Nthetas, Nbetas, *R_theta_beta.shape ) )
+        
+        # Then checks betas shape
+        elif R_theta_beta.shape[1] != Nbetas:
+            R_shape_beta_msg  = method_name + ': Shape of R_theta_beta is not consistent with betas object attribute.\n' + \
+                                ' '*(12+len(method_name)+2) + \
+                                'R_theta_beta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {3}, {4} ).)'
+            raise ValueError( R_shape_beta_msg.format( Nthetas, Nbetas, *R_theta_beta.shape ) )
+        
+        
+        # Checks that value provided for norm is accepted
+        # First, assumes that if None, they meant False
+        if norm is None:
+            norm = False
+        # If a string is provided, checks if it's gomega and makes lower case (not case sensitive)
+        elif isinstance( norm, str ):
+            if norm.lower() == 'gomega':
+                norm = norm.lower()
+            # If it isn't tries to convert to a float
+            else:
+                try:
+                    norm = float( norm )
+                except:
+                    norm_string_msg = method_name + ': String provided for norm not recognized.\n' + \
+                                ' '*(12+len(method_name)+2) + \
+                                "Accepted values are False (Boolean), 'gOmega' (string), or a Float or Integer."
+                    raise ValueError( norm_string_msg )
+        # Otherwise, if not False, makes sure it's a float
+        elif norm:
+            norm = float(norm)
+        
+        
+        
+        
+        
+        
+        #### Processing defaults for betamax and plotbetamax ####
+        
+        # If betamax is provided, check that it's in the betas array
+        if betamax is not None:
+        
+            # Finds index of betamax in betas array
+            if betamax in self.betas:
+                ibmax = np.where( self.betas == betamax )[0][0]
+            else:
+                err_msg = method_name + ": Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
+                raise ValueError(err_msg)
+        
+        # If using default betamax, just uses last one in betas array
+        elif betamax is None:
+            ibmax = Nbetas - 1
+            betamax = self.betas[ibmax]
+        
+        # Sets default plotbetamax, if not set
+        if plotbetamax is None:
+            plotbetamax = betamax
+            
+        
+        
+        
+        
+        
+        
+        
+        #### Applies Normalization ####
+        
+        # First, does it if there's no normalization
+        if not norm:
+            
+            # Array to plot is just R_theta_beta
+            temparray = R_theta_beta
+            
+            # Sets aside the name of what we're plotting for the title and its units
+            plotvalue = 'R'
+            plotunits = r's$^{-1}$'
+            
+        
+        # Does the same if we're normalizing by gOmega
+        elif isinstance( norm, str ):
+            
+            # Calculates gOmega
+            gOmega = 2.0 * float(self.k) * float( self.omegabar[1]-self.omegabar[0] )
+            
+            # Array to plot is R_theta_beta divided by that value
+            temparray = R_theta_beta / gOmega
+            
+            # Sets aside the name of what we're plotting for the title and its units
+            plotvalue = r'R/g$\Omega$'
+            plotunits = None
+        
+        
+        # Finally, if a value is provided for norm, assume's it's Gamma in inverse seconds
+        else:
+            
+            # Array to plot is R_theta_beta divided by that value
+            temparray = R_theta_beta / norm
+            
+            # Sets aside the name of what we're plotting for the title and its units
+            plotvalue = r'R/$\Gamma$'
+            plotunits = None
+            
+        
+        
+        
+        
+        
+        
+        
+        
+        #### Applies log scaling, if requested ####
+        
+        if aslog:
+            
+            # Takes the base-10 log of the array to plot
+            temparray = np.log10( temparray )
+            
+            # Updates the plotted value name
+            plotvalue = r'log(' + plotvalue + r')'
+            
+            # Updates the units, if any
+            if plotunits is not None:
+                plotunits = r'log(' + plotunits + r')'
+        
+        
+        
+        
+        
+        
+        
+        
+            
+        
+        
+        
+        
+        
+        #### Regridding array for smooth distribution of theta and beta solutions ####
+        
+        if temparray.size != 0:
+            
+            if verbose:
+                print('Regridding data...')
+            
+            # Ravels temparray to prepare for regridding
+            temparray = np.ravel( temparray )
+        
+            # Creates grid of existing (theta, beta) points
+            thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+            thetapts = np.ravel( thetapts )
+            betapts  = np.ravel( betapts )
+            points   = np.vstack(( thetapts, betapts )).T
+            
+            # Creates grid of desired theta and beta values and regrids
+            #   Assumed frequency is already equi-spaced so doesn't change.
+            thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
+            betagoal  = np.linspace( self.betas[0], betamax, 1001)
+            thetagrid, betagrid = np.meshgrid( thetagoal, betagoal )
+            
+            # Sets aside resolution of each for later use
+            dtheta = thetagoal[1] - thetagoal[0]
+            dbeta  = betagoal[1]  - betagoal[0]
+            
+            # Re-grids data array with desired interpolation
+            zs = griddata( points, temparray, (thetagrid, betagrid), method=interp)
+            
+            
+            
+            
+        
+        
+        
+            #### Actually plotting ####
+            
+            # Color map
+            cmap = 'viridis'
+            
+            # Clears any existing figures and makes plot
+            P.close()
+            P.imshow( zs, aspect='auto', origin='lower', cmap = cmap, \
+                      extent = [self.thetas.min() - dtheta/2., self.thetas.max() + dtheta/2., \
+                      self.betas[0] - dbeta/2., betamax + dbeta/2.] )
+            
+            # Axis limits
+            P.xlim( self.thetas.min(), self.thetas.max() )
+            P.ylim( self.betas[0], plotbetamax )
+            
+            # Axis labels; x-axis label depends on theta units
+            if self.units in ['degrees','deg','d']:
+                P.xlabel(r'$\theta$ [$^{\circ}$]')
+            else:
+                P.xlabel(r'$\theta$ [radians]')
+            P.ylabel(r'Total $\tau$')
+            
+            # Colorbar
+            cbar = P.colorbar()
+            if vmax <= 1e-2:
+                cbar.ax.ticklabel_format( axis='y', style = 'sci', scilimits = (0,0) )
+            
+            # Combines and adds plot title
+            if plotunits is not None:
+                unit_str = ' [ ' + plotunits + ' ]'
+            else:
+                unit_str = ''
+            if subtitle is None:
+                P.title( plotvalue + unit_str + '\n' )
+            else:
+                P.title( plotvalue + unit_str + '\n' + subtitle )
+        
+            # Saves figure if requested
+            if figname is not None:
+                try:
+                    P.savefig( figname )
+                    if verbose:
+                        print('Saved figure to {0}.'.format(figname))
+                except:
+                    print('Unable to save figure to {0}'.format(figname))
+    
+            # Finally, shows the plot, if requested
+            if show:
+                P.show()
+            else:
+                P.close()
+    
         
         
         
