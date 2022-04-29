@@ -1,9 +1,13 @@
-# Last updated 4/28/2021
-# - Bug fixes:
-#     - Fixed bug in maser.stokes that only affected 2-directional clouds
-# - Additions:
-#     - Maser_v_theta.calc_R and maser_v_theta.read_R
-#     - Wrote maser_v_theta.plot_R but haven't tested yet
+# Last updated 4/29/2021
+# - maser_v_theta class
+#     - Finished and debugged plot_R
+#     - Wrote and debugged new plotting method, plot_theta_logR
+#     - Method plot_mlevpa now has option to label curves by log(R/gOmega) instead of beta value.
+#       If labeling by log(R/gOmega), prints the percent variation in that value as a function of
+#       theta for each plotted beta value to the terminal.
+# - maser class
+#     - Compressed the warning message raised by read_cloud_end_stokes if a difference was found
+#       between object attribute and file values
 
 
 
@@ -22,7 +26,7 @@ from itertools import cycle, islice
 
 
 
-from .utils import _default_, string_to_list, string_to_bool
+from .utils import _default_, string_to_list, string_to_bool, gen_contour_levels
 from .const import e_charge, E0, me, c
 from .prism_plot import color_sets, marker_sets, format_label_string_with_exponent, _update_label_
 from .comparison import gkk
@@ -2031,9 +2035,8 @@ class maser(_maser_base_):
             if verbose:
             
                 # Makes warning string templates
-                warning_temp_line1 = '    MASER.READ_CLOUD_END_STOKES WARNING:  Parameter {0} in file does not match object attribute.'
-                warning_temp_line2 = '                                          File value : {0}    Attribute value : {1}    Diff : {2:.2e}'
-            
+                warning_temp_line = '    MASER.READ_CLOUD_END_STOKES WARNING:  Parameter {0} in file does not match object attribute. (Diff : {1:.2e})'
+                
                 # Starts with k, since that'll affect the omegabar arrays
                 if hdu[0].header['k'] != self.k:
                     print( warning_temp_line1.format( 'k' ) )
@@ -2047,8 +2050,7 @@ class maser(_maser_base_):
                                            ( 'AFdata', self.omegabar.size - 2*self.k ) ])
                 for key in check_dict.keys():
                     if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line1.format( key ) )
-                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                        print( warning_temp_line.format( key , hdu[0].header[key] - check_dict[key]) )
             
                 # Checks tau and beta values
                 check_dict = OrderedDict([ ( 'taures' , self.tau0.size ), \
@@ -2057,8 +2059,7 @@ class maser(_maser_base_):
                                            ( 'betamax', self.betas[-1] ) ])
                 for key in check_dict.keys():
                     if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line1.format( key ) )
-                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                        print( warning_temp_line.format( key , hdu[0].header[key] - check_dict[key]) )
             
                 # Checks other values present for all sims
                 check_dict = OrderedDict([ ( 'cloud'   , self.cloud ), \
@@ -2080,8 +2081,7 @@ class maser(_maser_base_):
                                            ( 'ftol'    , self.ftol ) ])
                 for key in check_dict.keys():
                     if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line1.format( key ) )
-                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                        print( warning_temp_line.format( key , hdu[0].header[key] - check_dict[key]) )
             
                 # Checking fcalc values if set for both
                 if 'ne' in hdu[0].header.keys() and self.fcalc:
@@ -2093,8 +2093,7 @@ class maser(_maser_base_):
                                                ( 'P0'   , self.P0 ) ])
                     for key in check_dict.keys():
                         if hdu[0].header[key] != check_dict[key]:
-                            print( warning_temp_line1.format( key ) )
-                            print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                            print( warning_temp_line.format( key , hdu[0].header[key] - check_dict[key]) )
             
                 # Checking values for 2nd ray if both are bi-directional
                 if hdu[0].header['cloud'] == 2 and self.cloud == 2:
@@ -2104,8 +2103,7 @@ class maser(_maser_base_):
                                                ( 'vF'      , self.iquvF[3] ) ])
                     for key in check_dict.keys():
                         if hdu[0].header[key] != check_dict[key]:
-                            print( warning_temp_line1.format( key ) )
-                            print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                            print( warning_temp_line.format( key , hdu[0].header[key] - check_dict[key]) )
             
             
             
@@ -5260,7 +5258,7 @@ class maser_v_theta(_maser_base_):
             
         Returns:
             
-            R_theta_beta    NumPy Array
+            R_beta_theta    NumPy Array
                                 The stimulated emission rate, in inverse seconds, at the cloud end.
                                 2-dimensional array with shape ( number_of_theta, number_of_beta).
         """
@@ -5287,7 +5285,7 @@ class maser_v_theta(_maser_base_):
         #### Iterates through betas and theta values to calculate R ####
         
         # Initializes empty 2D array to populate with calculated R values
-        R_theta_beta = np.array([])
+        R_beta_theta = np.array([])
         
         # Iterates through theta/maser object attributes
         for theta in self.thetas:
@@ -5316,12 +5314,12 @@ class maser_v_theta(_maser_base_):
             # Clears out deltas attribute from maser object to conserve memory
             del self.masers[theta].deltas
             
-            # Reshapes and adds R_v_beta to R_theta_beta array
+            # Reshapes and adds R_v_beta to R_beta_theta array
             R_v_beta = R_v_beta.reshape( R_v_beta.size, 1)
-            if R_theta_beta.size > 0:
-                R_theta_beta = np.hstack(( R_theta_beta, R_v_beta ))
+            if R_beta_theta.size > 0:
+                R_beta_theta = np.hstack(( R_beta_theta, R_v_beta ))
             else:
-                R_theta_beta = np.array( R_v_beta )
+                R_beta_theta = np.array( R_v_beta )
             
         
         
@@ -5390,7 +5388,7 @@ class maser_v_theta(_maser_base_):
             prime_hdu.data = betas
                
             # Makes HDU for data extension
-            ext1 = fits.ImageHDU( R_theta_beta.astype( np.float64 ) )
+            ext1 = fits.ImageHDU( R_beta_theta.astype( np.float64 ) )
             ext1.name = 'R'
             
             # Makes HDU list with each hdu as an extension
@@ -5411,7 +5409,7 @@ class maser_v_theta(_maser_base_):
         
         #### Returns, either way ####
         
-        return R_theta_beta
+        return R_beta_theta
             
     def read_R(self, filename, verbose = True ):
         """
@@ -5436,7 +5434,7 @@ class maser_v_theta(_maser_base_):
         
         Returns:
             
-            R_theta_beta    NumPy Array
+            R_beta_theta    NumPy Array
                                 The stimulated emission rate, in inverse seconds, at the cloud end.
                                 2-dimensional array with shape ( number_of_theta, number_of_beta).
         
@@ -5470,8 +5468,7 @@ class maser_v_theta(_maser_base_):
             if verbose:
             
                 # Makes warning string templates
-                warning_temp_line1 = '    MASER.READ_R WARNING:  Parameter {0} in file does not match object attribute.'
-                warning_temp_line2 = '                           File value : {0}    Attribute value : {1}    Diff : {2:.2e}'
+                warning_temp_line = '    MASER.READ_R WARNING:  Parameter {0} in file does not match object attribute. (Diff : {1:.2e})'
             
                 # Starts with k, since that'll affect the omegabar arrays
                 if hdu[0].header['k'] != self.k:
@@ -5486,8 +5483,7 @@ class maser_v_theta(_maser_base_):
                                            ( 'AFdata', self.omegabar.size - 2*self.k ) ])
                 for key in check_dict.keys():
                     if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line1.format( key ) )
-                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                        print( warning_temp_line.format( key, hdu[0].header[key] - check_dict[key] ) )
             
                 # Checks tau and beta values
                 check_dict = OrderedDict([ ( 'taures' , self.tau0.size ), \
@@ -5496,8 +5492,7 @@ class maser_v_theta(_maser_base_):
                                            ( 'betamax', self.betas[-1] ) ])
                 for key in check_dict.keys():
                     if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line1.format( key ) )
-                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                        print( warning_temp_line.format( key, hdu[0].header[key] - check_dict[key] ) )
             
                 # Checks other values present for all sims
                 check_dict = OrderedDict([ ( 'cloud'   , self.cloud ), \
@@ -5518,8 +5513,7 @@ class maser_v_theta(_maser_base_):
                                            ( 'ftol'    , self.ftol ) ])
                 for key in check_dict.keys():
                     if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line1.format( key ) )
-                        print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                        print( warning_temp_line.format( key, hdu[0].header[key] - check_dict[key] ) )
             
                 # Checking fcalc values if set for both
                 if 'ne' in hdu[0].header.keys() and self.fcalc:
@@ -5531,8 +5525,7 @@ class maser_v_theta(_maser_base_):
                                                ( 'P0'   , self.P0 ) ])
                     for key in check_dict.keys():
                         if hdu[0].header[key] != check_dict[key]:
-                            print( warning_temp_line1.format( key ) )
-                            print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                            print( warning_temp_line.format( key, hdu[0].header[key] - check_dict[key] ) )
             
                 # Checking values for 2nd ray if both are bi-directional
                 if hdu[0].header['cloud'] == 2 and self.cloud == 2:
@@ -5542,8 +5535,7 @@ class maser_v_theta(_maser_base_):
                                                ( 'vF'      , self.iquvF[3] ) ])
                     for key in check_dict.keys():
                         if hdu[0].header[key] != check_dict[key]:
-                            print( warning_temp_line1.format( key ) )
-                            print( warning_temp_line2.format( hdu[0].header[key], check_dict[key], hdu[0].header[key] - check_dict[key] ) )
+                            print( warning_temp_line.format( key, hdu[0].header[key] - check_dict[key] ) )
             
             
             
@@ -5553,11 +5545,11 @@ class maser_v_theta(_maser_base_):
             # Saves array of betas values
             self.betas = hdu[0].data
             
-            # Retrieves R_theta_beta
-            R_theta_beta = hdu[1].data
+            # Retrieves R_beta_theta
+            R_beta_theta = hdu[1].data
             
         # Returns R array 
-        return R_theta_beta
+        return R_beta_theta
         
         
         
@@ -5567,13 +5559,17 @@ class maser_v_theta(_maser_base_):
     ### Functions for plotting figures ###
     
     def plot_mlevpa( self, beta = None, overplot_gkk = False, label = None, label_loc = 'left', ml_max = None, \
-                        legend_loc = 3, legend_cols = 1, figname = None, show=True ):
+                        legend_loc = 3, legend_cols = 1, R_beta_theta = None, figname = None, show=True ):
         """
         Plots m_l and EVPA, both vs. theta, in two windows. Does so for a single total optical depth, beta, 
         or a list of optical depths. 
         
         Intended to be run *after* stokes at a given point in cloud have been calculated or read in for a range  
         of beta values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
+        
+        Can label curves with log(R/gOmega) value instead of beta value, but requires R_beta_theta to have been
+        calculated and/or read in with calc_R/read_R for either the full beta values in the betas attribute or
+        the subset of beta values provided on plot_mlevpa method call here.
             
         Optional Parameters:
             
@@ -5615,6 +5611,15 @@ class maser_v_theta(_maser_base_):
             legend_cols     Integer
                                 [ Default = 1 ]
                                 Number of columns in the legend.
+            
+            R_beta_theta    None or 2D NumPy array
+                                [ Default = None ]
+                                If None, will label each curve by its beta value. If a 2D NumPy array of
+                                calculated R values is provided, will label each curve by its mean log(R/gOmega) 
+                                value, and print out the variation in log(R/gOmega) for each curve as a function 
+                                of theta. The array provided must have shape (Nbetas, Nthetas), where Nbetas is
+                                *either* the number of beta values in the betas object attribute *or* the number
+                                of beta values provided by beta key here.
                                 
             figname         None or String
                                 [ Default = None ]
@@ -5683,6 +5688,8 @@ class maser_v_theta(_maser_base_):
         
         
         
+        
+        
         #### Does some processing on requested beta value ####
         
         # If none is provided, assume all beta values in betas attribute are desired
@@ -5707,6 +5714,78 @@ class maser_v_theta(_maser_base_):
                               ' '*(12+len(method_name)+2) + \
                               'the desired beta values before calling this method.'
                     raise ValueError(err_msg)
+        
+        
+        
+        
+        
+        
+        # If R_beta_theta is provided, checks it and creates labels
+        if R_beta_theta is not None:
+        
+            # Calculates gOmega
+            gOmega = 2.0 * float(self.k) * float( self.omegabar[1]-self.omegabar[0] )
+            
+            # First, makes sure it's a numpy array
+            if not isinstance( R_beta_theta, np.ndarray ):
+                err_msg = method_name + ': R_beta_theta must be a NumPy array, if provided.'
+                raise TypeError( err_msg )
+            
+            # Then, makes sure it's 2D
+            elif R_beta_theta.ndim != 2:
+                err_msg = method_name + ': R_beta_theta, if provided, must be a 2-dimensional NumPy array. (Current dimensions: {0})'
+                raise ValueError( err_msg.format(  R_beta_theta.ndim ) )
+            
+            # Then checks number of values along theta axis; should have shape ( Nbetas, Nthetas )
+            elif R_beta_theta.shape[1] != self.thetas.size:
+                err_msg = method_name + ': Number of values along theta (1st) axis in R_beta_theta must equal the number of thetas in the object attribute.\n'+\
+                        ' '*(12+len(method_name)+2) + 'Size of thetas array: {0},   Values along theta axis in R_beta_theta: {1}'
+                raise ValueError( err_msg.format( self.thetas.size, R_beta_theta.shape[1] ) )
+            
+            # Then checks if number of values along beta axis are the same size as beta array
+            elif R_beta_theta.shape[0] == len(beta):
+                
+                # Calculates array of log(R/gOmega); should still have shape ( Nbeta, Ntheta )
+                logRpts = np.log10( R_beta_theta / gOmega )
+            
+            # If number of values along beta axis different from beta array but same as betas attribute, 
+            #   calculates logRpts as pared down from original R_beta_theta array to only include 
+            #   requested beta values
+            elif R_beta_theta.shape[0] == self.betas.size:
+                logRpts = np.log10( R_beta_theta[beta_idxs] / gOmega )
+                
+            # If neither are true, raises an error
+            else:
+                err_msg = method_name + ': Number of values along beta (0th) axis in R_beta_theta must equal the number of beta values provided OR.\n'+\
+                        ' '*(12+len(method_name)+2) + 'the number of beta values in the betas object attribute.\n' + \
+                        ' '*(12+len(method_name)+2) + 'Betas provided: {0},  Size of betas array: {1},   Values along beta axis in R_beta_theta: {2}'
+                raise ValueError( err_msg.format( len(beta), self.betas.size, R_beta_theta.shape[0] ) )
+                
+            # If no error was raised, calculates the mean log(R/gOmega) vs theta for each included beta value
+            mean_logR = np.mean( logRpts, axis=1 )
+            
+            # Calculates range of logR/gOmega across theta for each beta
+            range_logR = np.array([  np.max(logRpts[i,:]) - np.min(logRpts[i,:]) for i in range(logRpts.shape[0])  ])
+            
+            # Calculates variation as a percent of the mean
+            logR_percent_change = np.abs( 100. * range_logR / mean_logR )
+            
+            # Prints output of percent variation across theta for each value of beta
+            print('Percent Change in log(R/gOmega) as a function of theta:')
+            for i in range(len(beta)):
+                print('  beta = {0: >5}  --  log(R/gOmega) = {1: >5}  --  {2:.2e} %'.format( beta[i], round(mean_logR[i],1), logR_percent_change[i] ))
+            
+            # Create curve labels
+            curve_labels = [ r'$\log(R/g\Omega) = $' + str(round(x,1)) for x in mean_logR  ]
+        
+        # If R_beta_theta not provided, label is just the value of beta
+        else:
+            curve_labels = beta
+            
+                
+                
+            
+            
         
         
         
@@ -5758,7 +5837,7 @@ class maser_v_theta(_maser_base_):
         fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.91 )
         
         # Iterates through requested beta values for plot and plots them
-        for i, bval in enumerate(beta):
+        for i in range(len(beta)):
             
             # Gets the index that corresponds to this total optical depth in the stacked arrays
             beta_idx = beta_idxs[i]
@@ -5770,7 +5849,7 @@ class maser_v_theta(_maser_base_):
             ax[0].plot( self.thetas, plot_ml  , marker = marker_list[i], \
                                                 color = color_list[i], fillstyle = fill_list[i] )
             ax[1].plot( self.thetas, plot_evpa, marker = marker_list[i], \
-                                                color = color_list[i], fillstyle = fill_list[i], label=bval )
+                                                color = color_list[i], fillstyle = fill_list[i], label=curve_labels[i] )
         
         # Overplot GKK functional form, if requested
         if overplot_gkk:
@@ -6604,7 +6683,7 @@ class maser_v_theta(_maser_base_):
             else:
                 P.close()
     
-    def plot_freq_tau( self, theta, plotvalue, betamax = None, plotbetamax = 100.0, convert_freq = True, \
+    def plot_freq_tau( self, theta, plotvalue, betamax = None, plotbetamax = None, convert_freq = True, \
                         tau_scale = 'linear', interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
         """
         Plots desired value vs. frequency (x-axis) and total optical depth of the cloud (y-axis) for a given 
@@ -6688,7 +6767,7 @@ class maser_v_theta(_maser_base_):
                                                        convert_freq = convert_freq, tau_scale = tau_scale, interp = interp, \
                                                        subtitle = subtitle, figname = figname, show = show, verbose = verbose )
     
-    def plot_theta_tau( self, plotvalue, freqoff = 0, betamax = None, plotbetamax = 100.0, convert_freq = True, \
+    def plot_theta_tau( self, plotvalue, freqoff = 0, betamax = None, plotbetamax = None, convert_freq = True, \
                         interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
         """
         Plots desired value at some offset from line center vs. theta (x-axis) and total optical depth (y-axis).
@@ -7028,16 +7107,18 @@ class maser_v_theta(_maser_base_):
                 print('Regridding data...')
             
             # Ravels temparray to prepare for regridding
+            # Before ravel, has shape (beta, theta)
             temparray = np.ravel( temparray )
         
-            # Creates grid of existing (theta, beta) points
+            # Creates grid of existing theta and beta values
+            # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
             thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
             thetapts = np.ravel( thetapts )
             betapts  = np.ravel( betapts )
             points   = np.vstack(( thetapts, betapts )).T
             
             # Creates grid of desired theta and beta values and regrids
-            #   Assumed frequency is already equi-spaced so doesn't change.
+            #   Again, thetagrid and betagrid have shape ( 1001, 36 )
             thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
             betagoal  = np.linspace( self.betas[0], betamax, 1001)
             thetagrid, betagrid = np.meshgrid( thetagoal, betagoal )
@@ -7047,6 +7128,7 @@ class maser_v_theta(_maser_base_):
             dbeta  = betagoal[1]  - betagoal[0]
             
             # Re-grids data array with desired interpolation
+            # Resulting zs has shape ( Nthetagoal, Nbetagoal ), like thetagrid and betagrid
             zs = griddata( points, temparray, (thetagrid, betagrid), method=interp)
             
             
@@ -7417,8 +7499,8 @@ class maser_v_theta(_maser_base_):
         else:
             P.close()
         
-    def plot_R( self, R_theta_beta, norm = False, aslog = False, betamax = None, plotbetamax = 100.0, \
-                        interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
+    def plot_R( self, R_beta_theta, norm = False, aslog = False, betamax = None, plotbetamax = None, \
+                        interp = 'cubic', fig_title = None, figname = None, show = True, verbose = True ):
         """
         Plots provided stimulated emission rate, R, vs. theta (x-axis) and total optical depth (y-axis).
         
@@ -7427,11 +7509,11 @@ class maser_v_theta(_maser_base_):
         
         Required Parameters:
             
-            R_theta_beta    2D NumPy Array
+            R_beta_theta    2D NumPy Array
                                 The stimulated emission rate, in inverse seconds, at the cloud end.
-                                2-dimensional array with shape ( number_of_theta, number_of_beta ).
+                                2-dimensional array with shape ( number_of_beta, number_of_theta ).
                                 Calculated R in each dimension should correspond to the object 
-                                attributes, thetas and betas.
+                                attributes, betas and thetas.
             
         Optional Parameters:
             
@@ -7468,10 +7550,9 @@ class maser_v_theta(_maser_base_):
                                 Type of interpolation to use for image re-gridding. Default is 'cubic'. Other 
                                 options are 'linear' and 'nearest'.
                                 
-            subtitle        None or String 
+            fig_title       None or String 
                                 [ Default = None ]
-                                If not None, provided string will be added to title as a second line. Intended 
-                                to be used to indicate faraday polarization values used if not 0.
+                                If not None, provided string will be added as figure title.
                                 
             figname         None or String
                                 [ Default = None ]
@@ -7490,8 +7571,42 @@ class maser_v_theta(_maser_base_):
                                 [ Default = True ]
                                 Whether to print feedback to terminal at various stages of the process.
         """
+        
+        method_name = 'MASER_V_THETA.PLOT_R'
+        
+        
+        
+        
+        
+        
+        
+        #### Processing defaults for betamax and plotbetamax ####
+        
+        # Finds index of maximum beta present for all ml arrays
+        if betamax is not None:
+        
+            # Finds index of betamax in betas array
+            if betamax in self.betas:
+                ibmax = np.where( self.betas == betamax )[0][0]
+                Nbetas = ibmax + 1
+            else:
+                err_msg = method_name + ": Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
+                raise ValueError(err_msg)
+        
+        # If using default betamax, just uses last one with stokes for all theta values present
+        else:
+            Nbetas = self.betas.size
+            ibmax = Nbetas - 1
+            betamax = self.betas[ibmax]
+        
+        # Sets default plotbetamax, if not set
+        if plotbetamax is None:
+            plotbetamax = betamax
+        
+        
+        
+        
         #### First, checks values ####
-         method_name = 'MASER_V_THETA.PLOT_R'
         
         # Makes sure that, if show is False, a figname has been specified
         if show is False and figname is None:
@@ -7506,33 +7621,33 @@ class maser_v_theta(_maser_base_):
             raise AttributeError( attr_missing_msg.format(req_attr) )
             
         # Since betas attribute must exist if we made it here, figures out the expected dimensions of the 
-        #    R_theta_beta array
+        #    R_beta_theta array
         Nthetas = self.thetas.size
         Nbetas  = self.betas.size
         
-        # Checks that the R_theta_beta is a Numpy Array
-        if not isinstance( R_theta_beta, np.ndarray ):
-            R_type_msg = method_name + ': R_theta_beta must be a NumPy array.'
+        # Checks that the R_beta_theta is a Numpy Array
+        if not isinstance( R_beta_theta, np.ndarray ):
+            R_type_msg = method_name + ': R_beta_theta must be a NumPy array.'
             raise TypeError( R_type_msg )
         
         # If it is a numpy array, makes sure it's 2-dimensional
-        elif R_theta_beta.ndim != 2:
-            R_type_msg = method_name + ': R_theta_beta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
-            raise ValueError( R_type_msg.format( R_theta_beta.ndim ) )
+        elif R_beta_theta.ndim != 2:
+            R_type_msg = method_name + ': R_beta_theta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
+            raise ValueError( R_type_msg.format( R_beta_theta.ndim ) )
         
-        # If it is 2-dimensional, checks the axis sizes, starting with the theta axis
-        elif R_theta_beta.shape[0] != Nthetas:
-            R_shape_theta_msg = method_name + ': Shape of R_theta_beta is not consistent with thetas object attribute.\n' + \
+        # If it is 2-dimensional, checks the axis sizes, starting with the beta axis
+        elif R_beta_theta.shape[0] != Nbetas:
+            R_shape_beta_msg  = method_name + ': Shape of R_beta_theta is not consistent with betas object attribute.\n' + \
                                 ' '*(12+len(method_name)+2) + \
-                                'R_theta_beta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {3}, {4} ).)'
-            raise ValueError( R_shape_theta_msg.format( Nthetas, Nbetas, *R_theta_beta.shape ) )
+                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_beta_msg.format( Nbetas, Nthetas, *R_beta_theta.shape ) )
         
-        # Then checks betas shape
-        elif R_theta_beta.shape[1] != Nbetas:
-            R_shape_beta_msg  = method_name + ': Shape of R_theta_beta is not consistent with betas object attribute.\n' + \
+        # then checks theta axis
+        elif R_beta_theta.shape[1] != Nthetas:
+            R_shape_theta_msg = method_name + ': Shape of R_beta_theta is not consistent with thetas object attribute.\n' + \
                                 ' '*(12+len(method_name)+2) + \
-                                'R_theta_beta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {3}, {4} ).)'
-            raise ValueError( R_shape_beta_msg.format( Nthetas, Nbetas, *R_theta_beta.shape ) )
+                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_theta_msg.format(  Nbetas, Nthetas,*R_beta_theta.shape ) )
         
         
         # Checks that value provided for norm is accepted
@@ -7561,30 +7676,6 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Processing defaults for betamax and plotbetamax ####
-        
-        # If betamax is provided, check that it's in the betas array
-        if betamax is not None:
-        
-            # Finds index of betamax in betas array
-            if betamax in self.betas:
-                ibmax = np.where( self.betas == betamax )[0][0]
-            else:
-                err_msg = method_name + ": Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
-                raise ValueError(err_msg)
-        
-        # If using default betamax, just uses last one in betas array
-        elif betamax is None:
-            ibmax = Nbetas - 1
-            betamax = self.betas[ibmax]
-        
-        # Sets default plotbetamax, if not set
-        if plotbetamax is None:
-            plotbetamax = betamax
-            
-        
-        
-        
         
         
         
@@ -7594,8 +7685,8 @@ class maser_v_theta(_maser_base_):
         # First, does it if there's no normalization
         if not norm:
             
-            # Array to plot is just R_theta_beta
-            temparray = R_theta_beta
+            # Array to plot is just R_beta_theta
+            temparray = R_beta_theta
             
             # Sets aside the name of what we're plotting for the title and its units
             plotvalue = 'R'
@@ -7608,8 +7699,8 @@ class maser_v_theta(_maser_base_):
             # Calculates gOmega
             gOmega = 2.0 * float(self.k) * float( self.omegabar[1]-self.omegabar[0] )
             
-            # Array to plot is R_theta_beta divided by that value
-            temparray = R_theta_beta / gOmega
+            # Array to plot is R_beta_theta divided by that value
+            temparray = R_beta_theta / gOmega
             
             # Sets aside the name of what we're plotting for the title and its units
             plotvalue = r'R/g$\Omega$'
@@ -7619,8 +7710,8 @@ class maser_v_theta(_maser_base_):
         # Finally, if a value is provided for norm, assume's it's Gamma in inverse seconds
         else:
             
-            # Array to plot is R_theta_beta divided by that value
-            temparray = R_theta_beta / norm
+            # Array to plot is R_beta_theta divided by that value
+            temparray = R_beta_theta / norm
             
             # Sets aside the name of what we're plotting for the title and its units
             plotvalue = r'R/$\Gamma$'
@@ -7669,16 +7760,18 @@ class maser_v_theta(_maser_base_):
                 print('Regridding data...')
             
             # Ravels temparray to prepare for regridding
+            # Before ravel, has shape (beta, theta)
             temparray = np.ravel( temparray )
         
             # Creates grid of existing (theta, beta) points
+            # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
             thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
             thetapts = np.ravel( thetapts )
             betapts  = np.ravel( betapts )
             points   = np.vstack(( thetapts, betapts )).T
             
             # Creates grid of desired theta and beta values and regrids
-            #   Assumed frequency is already equi-spaced so doesn't change.
+            #   Again, thetagrid and betagrid have shape ( 1001, 36 )
             thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
             betagoal  = np.linspace( self.betas[0], betamax, 1001)
             thetagrid, betagrid = np.meshgrid( thetagoal, betagoal )
@@ -7688,6 +7781,7 @@ class maser_v_theta(_maser_base_):
             dbeta  = betagoal[1]  - betagoal[0]
             
             # Re-grids data array with desired interpolation
+            # Resulting zs has shape ( Nthetagoal, Nbetagoal ), like thetagrid and betagrid
             zs = griddata( points, temparray, (thetagrid, betagrid), method=interp)
             
             
@@ -7720,18 +7814,19 @@ class maser_v_theta(_maser_base_):
             
             # Colorbar
             cbar = P.colorbar()
-            if vmax <= 1e-2:
+            if np.nanmax(zs) <= 1e-2:
                 cbar.ax.ticklabel_format( axis='y', style = 'sci', scilimits = (0,0) )
             
-            # Combines and adds plot title
+            # Combines and sets as colorbar label
             if plotunits is not None:
                 unit_str = ' [ ' + plotunits + ' ]'
             else:
                 unit_str = ''
-            if subtitle is None:
-                P.title( plotvalue + unit_str + '\n' )
-            else:
-                P.title( plotvalue + unit_str + '\n' + subtitle )
+            cbar.set_label( plotvalue + unit_str )
+            
+            # If plot title requested, sets
+            if fig_title is not None:
+                P.title( fig_title )
         
             # Saves figure if requested
             if figname is not None:
@@ -7748,6 +7843,567 @@ class maser_v_theta(_maser_base_):
             else:
                 P.close()
     
+    def plot_theta_logR( self, plotvalue,  R_beta_theta, freqoff = 0, betamax = None, ylims = None, contours = False, \
+                        convert_freq = True, interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
+        """
+        Plots desired value at some offset from line center vs. theta (x-axis) and log(R/gOmega) (y-axis).
+        
+        Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), or fracu (stoku/stoki).
+        
+        Intended to be run *after* stokes at a given point in cloud have been read in for a range of beta values
+        with cloud_end_stokes method AND using R_beta_theta array calculated with calc_R method.
+        
+        Required Parameters:
+            
+            plotvalue       String
+                                What to plot. Options are 'mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 
+                                'fracq' (for stokq/stoki), or 'fracu' for (stoku/stoki).
+            
+            R_beta_theta    2D NumPy Array
+                                The stimulated emission rate, in inverse seconds, at the cloud end. 2-dimensional 
+                                array with shape ( number_of_beta, number_of_theta ). Calculated R in each 
+                                dimension should correspond to the object attributes, betas and thetas.
+            
+        Optional Parameters:
+            
+            freqoff         Integer
+                                [ Default = 0 ]
+                                Offset index (with respect to the central frequency in omegabar) to be plotted.
+            
+            betamax         None or Float 
+                                [ Default = None ]
+                                Maximum value of beta to show data for in the plot. If None, plots all available 
+                                data.
+                                
+            ylims           Length-2 tuple/List or None
+                                [ Default = None ]
+                                The y-axis (log(R/gOmega)) limits (ymin, ymax) for the plot. If None, uses
+                                matplotlib default based on data.
+            
+            contours        Boolean
+                                [ Default = False ]
+                                Whether (True) or not (False) to overplot contours on the image.
+                        
+            convert_freq    Boolean 
+                                [ Default = True ]
+                                Whether to convert omegabar from angular frequency (s^-1) to frequency (MHz) 
+                                (if True) or not (if False).
+                                
+            interp          String
+                                [ Default = 'cubic' ]
+                                Type of interpolation to use for image re-gridding. Default is 'cubic'. Other 
+                                options are 'linear' and 'nearest'. 
+                                Note: 'nearest' will not properly cut off interpolation past valid range of 
+                                log(R/gOmega) values. Not recommended.
+                                
+            subtitle        None or String 
+                                [ Default = None ]
+                                If not None, provided string will be added to title as a second line. Intended 
+                                to be used to indicate faraday polarization values used if not 0.
+                                
+            figname         None or String
+                                [ Default = None ]
+                                If a string is provided, figure will be saved with the provided file path/name. 
+                                Note: this is the path from the working directory, NOT within the outpath of 
+                                the object. 
+                                If None, figure will be shown but not saved.
+            
+            show            Boolean
+                                [ Default = True ]
+                                Whether to show the figure or just close after saving (if figname provided).
+                                Note: If this is set to False, you must set figname to be a string to which
+                                the resulting figure will be saved; otherwise, the plot will disappear unseen.
+                                
+            verbose         Boolean
+                                [ Default = True ]
+                                Whether to print feedback to terminal at various stages of the process.
+        """
+        
+        method_name = 'MASER_V_THETA.PLOT_THETA_LOGR'
+        
+        
+        
+        
+        #### Processing default for betamax ####
+        
+        # Finds index of maximum beta present for all ml arrays
+        if betamax is not None:
+        
+            # Finds index of betamax in betas array
+            if betamax in self.betas:
+                ibmax = np.where( self.betas == betamax )[0][0]
+                Nbetas = ibmax + 1
+            else:
+                err_msg = method_name + ": Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
+                raise ValueError(err_msg)
+        
+        # If using default betamax, just uses last one with stokes for all theta values present
+        elif betamax is None:
+            Nbetas = self.betas.size
+            ibmax = Nbetas - 1
+            betamax = self.betas[ibmax]
+            
+            
+            
+            
+        #### First, checks values ####
+        
+        #### First, checks values ####
+        
+        # Makes sure that, if show is False, a figname has been specified
+        if show is False and figname is None:
+            err_msg = "{0}: Setting show = False without specifying a file name for the plot will result in no\n".format(method_name) + \
+                      " "*(12+len(method_name)+2) + \
+                      "figure produced. Please either set show = True or provide a figname for the plot."
+            raise ValueError(err_msg)
+        
+        # Makes template of error message for attribute checks
+        attr_missing_msg1 =  method_name + ': Object attribute {0} does not exist.'
+        attr_missing_msg2 =  method_name + ': Object attribute {0} does not exist for maser object with theta = {1} {2}.'
+        attr_ndim_msg     =  method_name + ': Object attribute {0} for maser object with theta = {1} {2} must be\n' + \
+                     ' '*(12+len(method_name)+2) + '2-dimensional. (Current number of dimensions = {3}).'
+        attr_dim0_msg     =  method_name + ': Shape of object attribute {0} for maser object with theta = {1} {2}\n' + \
+                     ' '*(12+len(method_name)+2) + 'is not consistent with attributes omegabar and k.\n' + \
+                     ' '*(12+len(method_name)+2) + 'Should be 2D NumPy array with {3} values along 0-axis (currently {4}).'
+        
+        # Iterates through required keywords to make sure the attributes exist; checks top level object first
+        for req_attr in ['tau_idx', 'betas']:
+            if req_attr not in self.__dict__.keys():
+                raise AttributeError( attr_missing_msg1.format(req_attr) )
+            
+        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the attribute 
+        #   arrays
+        Nfreq  = self.omegabar.size - 2 * self.k
+        Nthetas = self.thetas.size
+        
+        # Then checks maser objects in masers dictionary
+        required_attributes = [ 'stacked_stoki', 'stacked_stokq', 'stacked_stoku', 'stacked_stokv', 'stacked_mc', \
+                                'stacked_ml', 'stacked_evpa', 'tau_idx' ]
+        for req_att in required_attributes:
+            for theta in self.thetas:
+                
+                # Checks if the attribute exists
+                if req_att not in self.masers[theta].__dict__.keys():
+                    raise AttributeError( attr_missing_msg2.format(req_att, theta, self.units) )
+                
+                # For those that are arrays, check their dimensions and freq values
+                if req_att != 'tau_idx':
+                
+                    # Checks that the attribute is a 2d array
+                    if self.masers[theta].__dict__[req_att].ndim != 2:
+                        raise AttributeError( attr_ndim_msg.format(req_att, theta, self.units, self.masers[theta].__dict__[req_att].ndim ) )
+                
+                    # Checks number of values along 1st (frequency) axis
+                    elif self.masers[theta].__dict__[req_att].shape[1] != Nfreq:
+                        raise AttributeError( attr_dim0_msg.format(req_att, theta, self.units, Nfreq, self.masers[theta].__dict__[req_att].shape[0] ) )
+            
+            # Checks size of 0th (beta) axis of those attribute arrays for every theta value
+            if req_att != 'tau_idx':
+                Nbeta_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
+            
+                # If not every maser object has the same number of betas (and this hasn't been done for a previous 
+                #   attribute), prints a warning and adjusts number of betas
+                if np.unique( Nbeta_per_theta ).size != 1 and Nbeta_per_theta.min() != Nbetas:
+                    warn_msg = method_name + ' WARNING: Optical depths in object attribute {0} not consistent across theta.\n' + \
+                                ' '*(len(method_name)+10) + 'Highest value of optical depth present for all theta is {1}. ({2} values.)'
+                    print( warn_msg.format( req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
+                    Nbetas = Nbeta_per_theta.min()
+        
+                # If every maser object does have the same number of betas but its less than that expected from Nbetas, 
+                #   prints a warning and adjusts number of betas
+                elif  Nbeta_per_theta.min() != Nbetas:
+                    warn_msg = method_name + ' WARNING: Optical depths in object attribute {0} not consistent with betas attribute.\n' + \
+                                ' '*(len(method_name)+10) + 'Highest value of optical depth present for all theta is {1}. ({2} values.)'
+                    print( warn_msg.format( req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
+                    Nbetas = Nbeta_per_theta.min()
+        
+        # Makes sure that specified plotvalue is allowed:
+        if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu']:
+            err_msg = method_name + ": plotvalue '{0}' not recognized.\n".format(plotvalue) + \
+                        ' '*(12+len(method_name)+2) + "Allowed values are 'mc', 'ml', 'evpa', 'stoki', 'stokq',\n" + \
+                        ' '*(12+len(method_name)+2) + "'stoku', 'stokv', 'fracq', or 'fracu'."
+            raise ValueError(err_msg)
+        
+        # Checks that the R_beta_theta is a Numpy Array
+        if not isinstance( R_beta_theta, np.ndarray ):
+            R_type_msg = method_name + ': R_beta_theta must be a NumPy array.'
+            raise TypeError( R_type_msg )
+        
+        # If it is a numpy array, makes sure it's 2-dimensional
+        elif R_beta_theta.ndim != 2:
+            R_type_msg = method_name + ': R_beta_theta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
+            raise ValueError( R_type_msg.format( R_beta_theta.ndim ) )
+        
+        # If it is 2-dimensional, checks the axis sizes, starting with the beta axis
+        elif R_beta_theta.shape[0] != Nbetas:
+            R_shape_beta_msg  = method_name + ': Shape of R_beta_theta is not consistent with betas object attribute.\n' + \
+                                ' '*(12+len(method_name)+2) + \
+                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_beta_msg.format( Nbetas, Nthetas, *R_beta_theta.shape ) )
+        
+        # then checks theta axis
+        elif R_beta_theta.shape[1] != Nthetas:
+            R_shape_theta_msg = method_name + ': Shape of R_beta_theta is not consistent with thetas object attribute.\n' + \
+                                ' '*(12+len(method_name)+2) + \
+                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_theta_msg.format(  Nbetas, Nthetas,*R_beta_theta.shape ) )
+        
+        # Checks format of provided ylims
+        if ylims is not None:
+            
+            # If it's a list-like object, makes sure it's a list and checks length
+            if isinstance( ylims, list ) or isinstance( ylims, tuple ) or isinstance( ylims, np.ndarray ):
+                ylims = list( ylims )
+                if len( ylims ) != 2:
+                    err_msg = method_name + ': List provided for ylims must be length 2 ( ymin, ymax ). Current length: {0}'
+                    raise ValueError( err_msg.format( len(ylims) ) )
+            
+            # If it's not a list, raises an error
+            else:
+                err_msg = method_name + ': Value provided for ylims must be either None or length-2 list/tuple/NumPy array.'
+                raise ValueError( err_msg )
+        
+        
+        
+        
+        
+        
+        
+        
+        
+        #### Determine the frequency index ####
+        
+        # Makes sure that all maser objects in masers dictionary have same k value
+        ks_for_theta = np.unique( np.array([ self.masers[ theta ].k for theta in self.thetas ]) )
+        if ks_for_theta.size > 1:
+            raise ValueError( 'MASER_V_THETA.PLOT_V_DIDV ERROR:    Maser objects in masers dictionary must all have same value of k.' + \
+                              ' ({0} values found.)'.format( ks_for_theta.size ) )
+        
+        # Checks top-level object k value to make sure it's consistent with these
+        if self.k not in ks_for_theta:
+            raise ValueError( 'MASER_V_THETA.PLOT_V_DIDV ERROR:    Maser_v_theta object must have the same value of k as objects in masers dictionary.' )
+        
+        # Actually sets aside index of line center frequency
+        jcenter = int( Nfreq / 2 )
+            
+        
+        
+        #### Determining which array to plot ####
+        
+        # Start with Stokes i
+        if plotvalue == 'stoki':
+            
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+            
+            # Sets plot title & colormap, while we're here
+            fig_title = r'Stokes i'
+            cmap = 'viridis'
+        
+        # Next, Stokes q
+        elif plotvalue == 'stokq':
+        
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'Stokes q'
+            cmap = 'RdBu'
+        
+        # Next, Stokes u
+        elif plotvalue == 'stoku':
+        
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'Stokes u'
+            cmap = 'RdBu'
+        
+        # Next, Stokes v
+        elif plotvalue == 'stokv':
+        
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'Stokes v'
+            cmap = 'RdBu'
+        
+        # Next, fractional stokes q
+        elif plotvalue == 'fracq':
+        
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta          ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'Stokes q/i'
+            cmap = 'RdBu'
+        
+        # Next, fractional stokes u
+        elif plotvalue == 'fracu':
+        
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta          ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'Stokes u/i'
+            cmap = 'RdBu'
+        
+        # Next, does ml
+        elif plotvalue == 'ml':
+        
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$m_l$'
+            cmap = 'viridis'
+        
+        # Next, does mc
+        elif plotvalue == 'mc':
+        
+            # Build array with plotable range
+            temparray = self.masers[ self.thetas[0] ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = self.masers[ theta      ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$m_c$'
+            cmap = 'RdBu'
+        
+        # Finally, does evpa
+        elif plotvalue == 'evpa':
+        
+            # Build array with plotable range
+            temparray = ( self.masers[ self.thetas[0] ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
+            temparray = temparray.reshape( temparray.size, 1 )
+            for theta in self.thetas[1:]:
+                thetaline = ( self.masers[ theta      ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                temparray = np.hstack(( temparray, thetaline ))
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'EVPA'
+            cmap = 'RdBu'
+            
+            
+        
+        
+        
+        
+        #### Regridding array for smooth distribution of theta and beta solutions ####
+        
+        if temparray.size != 0:
+            
+            # Calculates gOmega
+            gOmega = 2.0 * float(self.k) * float( self.omegabar[1]-self.omegabar[0] )
+            
+            # Calculates array of log(R/gOmega); should still have shape ( Nbeta, Ntheta )
+            logRpts = np.log10( R_beta_theta / gOmega )
+            
+            if verbose:
+                print('Regridding data...')
+            
+            # Ravels temparray to prepare for regridding
+            # Before ravel, has shape (beta, theta)
+            temparray = np.ravel( temparray )
+        
+            # Creates grid of existing (theta, beta) points
+            # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
+            thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+            
+            # Creates point locations, but instead of betapts values, want 
+            #   values of log10(R_theta_beta/gOmega)
+            thetapts = np.ravel( thetapts )
+            logRpts  = np.ravel( logRpts )
+            points   = np.vstack(( thetapts, logRpts )).T
+            
+            # Creates grid of desired theta and log(R/gOmega) values and regrids
+            #   Again, thetagrid and logRgrid have shape ( 1001, 36 )
+            thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
+            logRgoal  = np.linspace( np.nanmin(logRpts), np.nanmax(logRpts), 1001)
+            thetagrid, logRgrid = np.meshgrid( thetagoal, logRgoal )
+            
+            # Sets aside resolution of each for later use
+            dtheta = thetagoal[1] - thetagoal[0]
+            dlogR  = logRgoal[1]  - logRgoal[0]
+            
+            # Re-grids data array with desired interpolation
+            # Resulting zs has shape ( Nthetagoal, NlogRgoal )
+            zs = griddata( points, temparray, (thetagrid, logRgrid), method=interp)
+            
+            
+            
+            
+            
+            
+            
+        
+        
+            #### Figures out min and max for color ####
+            
+            if verbose:
+                print('Plotting figure...')
+            
+            # zs shape is (betagoal, thetagoal). no freq edge effects
+            vmax = np.nanmax(np.abs( zs ))
+            if plotvalue == 'evpa':
+                vmin = 0.0
+                vmax = pi
+            elif cmap == 'RdBu':
+                vmin = -1.0 * vmax
+            else:
+                vmin = 0.0
+            
+            
+            
+            
+        
+        
+        
+            #### Actually plotting ####
+            
+            # Makes figure
+            P.close()
+            fig, ax = P.subplots(nrows=1, ncols=1, figsize = (5.5,4.5))
+            fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.88 )
+            
+            # Plots image
+            im = ax.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
+                            extent = [self.thetas.min() - dtheta/2., self.thetas.max() + dtheta/2., \
+                            logRgoal[0] - dlogR/2., logRgoal[-1] + dlogR/2.] )
+            
+            # Adds contour, if requested
+            if contours:
+                
+                # Determines contour levels
+                if plotvalue == 'evpa':
+                    levels = [ x*pi for x in [0.25,0.75] ]
+                else:
+                    levels = gen_contour_levels( vmin, vmax, min_contours = 3 )
+                _cs2 = ax.contour( thetagrid, logRgrid, zs, levels=levels, origin='lower', colors='white' )
+            
+            # Axis limits
+            ax.set_xlim( self.thetas.min(), self.thetas.max() )
+            if ylims is not None:
+                ax.set_ylim( *ylims )
+            else:
+                ax.set_ylim( logRgoal[0], logRgoal[-1] )
+            
+            # Axis labels; x-axis label depends on theta units
+            if self.units in ['degrees','deg','d']:
+                ax.set_xlabel(r'$\theta$ [$^{\circ}$]')
+            else:
+                ax.set_xlabel(r'$\theta$ [radians]')
+            ax.set_ylabel(r'log( $R/g\Omega$ )')
+            
+            # Makes colorbar; will have ticks at overplotted contour lines, if contours requested
+            if contours:
+                if plotvalue == 'evpa':
+                    cbar = fig.colorbar( im, ax=ax, ticks = [ x*pi for x in [0.,0.25,0.5,0.75,1.0] ] )
+                    cbar.add_lines( _cs2 )
+                    tick_labels = ['0', r'$\pi$/4', r'$\pi$/2', r'3$\pi$/4', r'$\pi$']
+                    cbar.ax.set_yticklabels( tick_labels )
+                else:
+                    cbar = fig.colorbar( im, ax=ax, ticks = levels )
+                    cbar.add_lines( _cs2 )
+                    
+            else:
+                if plotvalue == 'evpa':
+                    cbar = fig.colorbar( im, ax=ax, ticks = [ x*pi for x in [0.,0.25,0.5,0.75,1.0] ] )
+                    tick_labels = ['0', r'$\pi$/4', r'$\pi$/2', r'3$\pi$/4', r'$\pi$']
+                    cbar.ax.set_yticklabels( tick_labels )
+                else:
+                    cbar = fig.colorbar( im, ax=ax )
+            
+            # Converts colorbar ticks to scientific notation if they're small; won't affect evpa plots
+            if vmax <= 1e-2:
+                cbar.ax.ticklabel_format( axis='y', style = 'sci', scilimits = (0,0) )
+            
+            # Determine plot title; depends on frequency with respect to line center
+            if freqoff == 0:
+                freqtitle = 'Line Center'
+            else:
+                # Gets frequency offset in ANGULAR freq (s^-1)
+                dfreq = self.omegabar[ jcenter + freqoff ] - self.omegabar[jcenter]
+            
+                 # If frequency conversion to MHz is requested, converts and generates freq_string label
+                if convert_freq:
+            
+                    # Converts from angular frequency to frequency & Creates label
+                    dfreq = dfreq / (2.*pi)
+                    if dfreq < 1000.0:
+                        freqtitle = '{0} Hz from Line Center'.format( round(dfreq,0) )
+                    elif dfreq >= 1e3 and dfreq < 1e6:
+                        freqtitle = '{0} kHz from Line Center'.format( round(dfreq*1e-3,0) )
+                    elif dfreq >= 1e6 and dfreq < 1e9:
+                        freqtitle = '{0} MHz from Line Center'.format( round(dfreq*1e-6,0) )
+                    elif dfreq >= 1e9:
+                        freqtitle = '{0} GHz from Line Center'.format( round(dfreq*1e-9,0) )
+        
+                # If no frequency conversion requested, makes frequency label
+                else:
+                    freqtitle = r'$\varpi =$ {0:.2e}'.format(dfreq) + r' s$^{-1}$ from Line Center'
+            
+            # Combines and adds plot title
+            if subtitle is None:
+                P.title( fig_title + r' at Cloud End, ' + freqtitle + '\n' )
+            else:
+                P.title( fig_title + r' at Cloud End, ' + freqtitle + '\n' + subtitle )
+        
+            # Saves figure if requested
+            if figname is not None:
+                try:
+                    P.savefig( figname )
+                    if verbose:
+                        print('Saved figure to {0}.'.format(figname))
+                except:
+                    print('Unable to save figure to {0}'.format(figname))
+    
+            # Finally, shows the plot, if requested
+            if show:
+                P.show()
+            else:
+                P.close()
         
         
         

@@ -1,11 +1,3 @@
-# Last updated 4/26/2021
-# - Created script to serve as location of plotting defaults for markers and colors
-# - Added low-level function, format_label_string_with_exponent, to move scientific notation from the tick labels of 
-#   an axis to the axis label to remove clutter, as well as the even lower-level function used by that, _update_label_.
-# - Added plotting function plot_mcpeak, which plots the maximum fractional circular polarization (mc) as a function of
-#   total optical depth for a list of maser class objects.
-# - Added plotting function plot_all_v_gkk, which plots the fractional linear polarization (ml) and EVPA at line center
-#   vs. theta for a list of maser_v_theta objects, along with overplotting the GKK functional form for comparison.
 
 
 
@@ -470,7 +462,9 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
     else:
         P.close()
         
-        
+
+
+
 
 
 
