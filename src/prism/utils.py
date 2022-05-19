@@ -147,7 +147,6 @@ def gen_contour_levels( value_min, value_max, min_contours = 2 ):
         
         # scale difference is just the scale of the max
         exscale_diff = exscale_max
-        
     # If the max is zero but the min isn't
     else:
         
@@ -174,6 +173,7 @@ def gen_contour_levels( value_min, value_max, min_contours = 2 ):
     
     # Generates levels
     levels = np.arange( level_min, value_max, level_step )
+
     
     # Converts levels to a list and makes sure levels rounded to desired precision
     levels = [ round( lev, -exscale_diff ) for lev in levels ]
@@ -234,6 +234,7 @@ def gen_contour_levels( value_min, value_max, min_contours = 2 ):
         #print('new level_step: {0}'.format( level_step ))
         #print(levels)
     
+
     # Returns the generated levels
     return levels
         

@@ -5423,7 +5423,14 @@ class maser_v_theta(_maser_base_):
         
         
         
+        #### Returns, either way ####
         
+        return R_beta_theta
+            
+    def read_R(self, filename, verbose = True ):
+        """
+        Reads in fits file created by method calc_R using saveas option and returns the stimulated
+        emission rate array as a function of theta and beta.
         
         #### Returns, either way ####
         
@@ -5451,7 +5458,7 @@ class maser_v_theta(_maser_base_):
             betas
         
         Returns:
-            
+
             R_beta_theta    NumPy Array
                                 The stimulated emission rate, in inverse seconds, at the cloud end.
                                 2-dimensional array with shape ( number_of_theta, number_of_beta).
@@ -5848,7 +5855,7 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Actually plots figure ####
+        #### Figure axes and labels ####
         
         # Creates figure window
         fig, ax = P.subplots(nrows=2, ncols=1, sharex=True, figsize = (5.5,4.5))
@@ -5875,7 +5882,16 @@ class maser_v_theta(_maser_base_):
             gkk_ml, gkk_evpa = gkk(gkk_thetas, units = self.units)
             ax[0].plot( gkk_thetas, np.abs(gkk_ml), 'k--' )
         
+        # Y-axis limits and label of evpa plot
+        ymin1, ymax1 = -pi/16., 17.*pi/16.
+        ax[1].set_ylim( ymin1, ymax1 )
+        ax[1].set_ylabel(r'$\chi$ [radians]')
         
+        # Puts the ticks of the evpa plot in units of pi radians
+        ticks = [ 0, 0.25*pi, 0.5*pi, 0.75*pi, pi]
+        tick_labels=['0', '', r'$\pi$/2', '', r'$\pi$']
+        ax[1].set_yticks( ticks )
+        ax[1].set_yticklabels( tick_labels )
         
         
         
@@ -6243,8 +6259,22 @@ class maser_v_theta(_maser_base_):
             ax.plot( plot_costheta, flip*plot_vdidvel/norm, marker = marker_list[i], color = color_list[i], \
                                                                                 fillstyle = fill_list[i], label = bval)
         
+        #### Figure axes and labels ####
         
+        # X-axis limits and label
+        ax.set_xlim(0,1)
+        ax.set_xlabel(r'$\cos \theta$')
         
+        # Y-axis limits can be provided on call
+        if ylims is not None:
+            ymin, ymax = ylims
+        elif np.nanmin( flip*plot_vdidvel ) >= 0.0:
+            ymin = 0
+            ymax = None
+        else:
+            ymin = None
+            ymax = None
+        ax.set_ylim(ymin, ymax)
         
         #### Figure axes and labels ####
         
@@ -6302,13 +6332,13 @@ class maser_v_theta(_maser_base_):
             label = freqlabel + '\n' + label
         else:
             label = freqlabel
+
         
         # Sets plot label, if requested.
         if label_loc == 'left':
             ax.text( 0.02, ymax - (ymax-ymin)*0.05, label, ha='left', va='top', fontsize='large')
         elif label_loc == 'right':
             ax.text( 0.98, ymax - (ymax-ymin)*0.05, label, ha='right', va='top', fontsize='large')
-        
         
         
         
@@ -6856,7 +6886,10 @@ class maser_v_theta(_maser_base_):
                         
             label          None or String
                                 [ Default = None ]
-                                Text to label inside plot.
+                                Y-limit (optical depth) shown on the plot axes. If None, will be the same as
+                                betamax. (Only useful if you want to set the y-limit used by the figure to be
+                                the same as other figures despite not having beta up to that value for this
+                                parameter set.)
                         
             label_loc      String: 'left' or 'right'
                                 [ Default = 'left' ]
@@ -6887,6 +6920,7 @@ class maser_v_theta(_maser_base_):
                 ' '*16+"                                       figure produced. Please either set show = True or provide a figname for the plot."
             raise ValueError(err_msg)
         
+
         # Makes template of error message for attribute checks
         attr_missing_msg1 = 'MASER_V_THETA.PLOT_THETA_TAU ERROR:    Object attribute {0} does not exist.'
         attr_missing_msg2 = 'MASER_V_THETA.PLOT_THETA_TAU ERROR:    Object attribute {0} does not exist for maser object with theta = {1} {2}.'
@@ -6960,8 +6994,14 @@ class maser_v_theta(_maser_base_):
             err_msg = "tau_scale '{0}' not recognized.\n".format(tau_scale) + \
                       "        Allowed values are 'linear' or 'log'."
             raise ValueError(err_msg)
+
         
+        # If using default betamax, just uses last one with stokes for all theta values present
+        elif betamax is None:
+            ibmax = Nbetas - 1
+            betamax = self.betas[ibmax]
         
+
         
         
         
@@ -6989,6 +7029,7 @@ class maser_v_theta(_maser_base_):
         if plotbetamax is None:
             plotbetamax = betamax
         
+
         
         
         
@@ -7011,8 +7052,6 @@ class maser_v_theta(_maser_base_):
         
         
         #### Determining which array to plot ####
-        
-        
         
         # Start with Stokes i
         if plotvalue == 'stoki':
@@ -9024,6 +9063,7 @@ class maser_v_theta(_maser_base_):
             else:
                 P.title( fig_title + r' at Cloud End, ' + freqtitle + '\n' + subtitle )
         
+
             # Saves figure if requested
             if figname is not None:
                 try:

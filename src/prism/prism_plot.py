@@ -8,7 +8,6 @@
 
 
 
-
 # Basic imports
 import matplotlib.pyplot as P
 import numpy as np
