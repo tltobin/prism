@@ -1,13 +1,15 @@
-# Last updated 4/29/2021
-# - maser_v_theta class
-#     - Finished and debugged plot_R
-#     - Wrote and debugged new plotting method, plot_theta_logR
-#     - Method plot_mlevpa now has option to label curves by log(R/gOmega) instead of beta value.
-#       If labeling by log(R/gOmega), prints the percent variation in that value as a function of
-#       theta for each plotted beta value to the terminal.
-# - maser class
-#     - Compressed the warning message raised by read_cloud_end_stokes if a difference was found
-#       between object attribute and file values
+# Last updated 5/19/2021
+# - Fixed y-axis log scaling in methods with tau_scale='log' options.
+# - Fixed gOmega calculation to include conversion from angular frequency to frequency.
+# - Fixed error where EVPA were not being properly wrapped in maser_v_theta method plot_mlevpa.
+# - Updates to maser_v_theta.plot_theta_tau:
+#     - Added tau_scale='log' option and in-figure labelling
+#     - Added option to plot values at peak or bin multiple frequencies with freqoff keyword.
+#     - Added contours option
+#     - Added ploitvalues 'vmetric', 'quv', and 'mlmc'
+# - Added freqoff option to plot values at peak or multiple frequencies to maser_v_theta.plot_mlmc
+# - Updated some help text
+
 
 
 
@@ -314,7 +316,7 @@ class _maser_base_:
             B       = magnetic field strength [Gauss]
             A0      = Einstein A coefficient [ s^-1 ]
             P0      = pump rate into the 0 state [cm^-3 s^-1 or m^-3 s^-1 ]
-        Also uses the Doppler width in Hz given in object initialization.
+            W       = Doppler width [Hz]
         
         Keyword mode can be set to 'cm' or 'm' to specify units of the given ne and P0 values.
         Default is 'cm'. If set to 'cm', these values will be converted to SI prior to calculation.
@@ -2826,30 +2828,46 @@ class maser(_maser_base_):
         
             #### Actually plotting ####
             
-            P.clf()
-            P.imshow( zs, aspect='auto', extent=[freqmin, freqmax, tau_ext_min, tau_ext_max ], \
-                origin='lower', vmin = vmin, vmax = vmax, cmap=cmap )
+            P.close()
+            fig, ax = P.subplots(nrows=1, ncols=1, figsize = (5.5,4.5))
+            fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.88 )
+            
+            # Plots image
+            if tau_scale == 'log':
+                # Get correct bin ends on y-scale
+                dy = log10(betagoal[1]/betagoal[0])
+                #print('dy = {0}'.format(dy))
+                freq_plot = np.linspace( freqmin, freqmax, (self.omegabar.size - 2*self.k ) + 1 )
+                beta_plot  = np.logspace( log10(self.betas[0]) - dy/2. , log10(betamax) + dy/2., betagoal.size+1 )
+                #print('theta_plot from {0} to {1}'.format(theta_plot[0], theta_plot[-1]))
+                #print('beta_plot from {0} to {1}'.format(beta_plot[0], beta_plot[-1]))
+                im = ax.pcolormesh( freq_plot, beta_plot, zs, vmin = vmin, vmax = vmax, cmap = cmap )
+                ax.set_yscale( 'log' )
+            else:
+                dbeta  = betagoal[1]  - betagoal[0]
+                im = ax.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
+                                extent = [ freqmin, freqmax, betagoal[0] - dbeta/2., betagoal[-1] + dbeta/2.] )
             
             # Axis limits & log scale on y-axis
-            P.xlim( freqmin, freqmax )
-            P.ylim( self.betas[0], plotbetamax )
+            ax.set_xlim( freqmin, freqmax )
+            ax.set_ylim( self.betas[0], plotbetamax )
             if tau_scale == 'log':
-                P.yscale( 'log' )
+                ax.set_yscale( 'log' )
             
             # If frequency conversion not requested, makes x-axis frequency ticks in scientific notation
             if not convert_freq:
-                P.ticklabel_format( axis='x', style = 'sci', scilimits = (0,0) )
+                ax.set_ticklabel_format( axis='x', style = 'sci', scilimits = (0,0) )
             
             # Axis labels and title
-            P.xlabel(xlabel)
-            P.ylabel(r'Total $\tau$')
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(r'Total $\tau$')
             if subtitle is None:
-                P.title( fig_title )
+                ax.set_title( fig_title )
             else:
-                P.title( fig_title + '\n' + subtitle )
+                ax.set_title( fig_title + '\n' + subtitle )
             
             # Colorbar
-            cbar = P.colorbar()
+            cbar = fig.colorbar( im, ax=ax )
             if vmax <= 1e-2:
                 cbar.ax.ticklabel_format( axis='y', style = 'sci', scilimits = (0,0) )
         
@@ -5351,7 +5369,7 @@ class maser_v_theta(_maser_base_):
             prime_hdu.header['betaN'] = ( self.betas.size, 'Number of Optical Depths' )
             prime_hdu.header['betamin'] = ( self.betas[0], 'Min of Optical Depths' )
             prime_hdu.header['betamax'] = ( self.betas[-1], 'Max of Optical Depths' )
-            prime_hdu.header['gOmega'] = ( 2 * float(self.k) * (self.omegabar[1]-self.omegabar[0]), 'Full Zeeman spliting rate [s^-1]' )
+            prime_hdu.header['gOmega'] = ( float(self.k) * (self.omegabar[1]-self.omegabar[0] / pi ), 'Full Zeeman spliting rate [s^-1]' )
             
             
             # Populates primary header with other info about calculation
@@ -5723,8 +5741,8 @@ class maser_v_theta(_maser_base_):
         # If R_beta_theta is provided, checks it and creates labels
         if R_beta_theta is not None:
         
-            # Calculates gOmega
-            gOmega = 2.0 * float(self.k) * float( self.omegabar[1]-self.omegabar[0] )
+            # Calculates gOmega and converts from angular frequency to frequency
+            gOmega = float(self.k) * float( self.omegabar[1]-self.omegabar[0] )  / pi 
             
             # First, makes sure it's a numpy array
             if not isinstance( R_beta_theta, np.ndarray ):
@@ -5844,7 +5862,7 @@ class maser_v_theta(_maser_base_):
             
             # Makes the lists of line center ml and evpa values to plot
             plot_ml   = [ self.masers[theta].stacked_ml[   beta_idx , jcenter ] for theta in self.thetas ]
-            plot_evpa = [ self.masers[theta].stacked_evpa[ beta_idx , jcenter ] for theta in self.thetas ]
+            plot_evpa = [ ( self.masers[theta].stacked_evpa[ beta_idx , jcenter ] + pi ) % pi for theta in self.thetas ]
             # Actually plots with corresponding color/marker/fill
             ax[0].plot( self.thetas, plot_ml  , marker = marker_list[i], \
                                                 color = color_list[i], fillstyle = fill_list[i] )
@@ -5895,18 +5913,21 @@ class maser_v_theta(_maser_base_):
         ax[1].set_yticklabels( tick_labels )
         
         # Make the legend
-        ax[1].legend(loc=legend_loc, fontsize='small', ncol=legend_cols)
+        if R_beta_theta is None:
+            ax[1].legend(loc=legend_loc, fontsize='small', ncol=legend_cols)
+        else:
+            ax[1].legend(loc=legend_loc, fontsize='x-small', ncol=legend_cols)
     
         # Sets plot label, if requested.
         if label is not None:
             if label_loc in ['left','upperleft']:
-                ax[0].text( 90.*0.02, ymax - (ymax -ymin )*0.05, label, ha='left', va='top', fontsize='large')
+                ax[0].text( 90.*0.02, ymax - (ymax -ymin )*0.05, label, ha='left', va='top')
             elif label_loc in ['right','upperright']:
-                ax[0].text( 90.*0.98, ymax - (ymax -ymin )*0.05, label, ha='right', va='top', fontsize='large')
+                ax[0].text( 90.*0.98, ymax - (ymax -ymin )*0.05, label, ha='right', va='top')
             elif label_loc == 'lowerleft':
-                ax[1].text( 90.*0.02, ymax1- (ymax1-ymin1)*0.05, label, ha='left', va='top', fontsize='large')
+                ax[1].text( 90.*0.02, ymax1- (ymax1-ymin1)*0.05, label, ha='left', va='top')
             elif label_loc == 'lowerright':
-                ax[1].text( 90.*0.98, ymax1- (ymax1-ymin1)*0.05, label, ha='right', va='top', fontsize='large')
+                ax[1].text( 90.*0.98, ymax1- (ymax1-ymin1)*0.05, label, ha='right', va='top')
         
         
         
@@ -6636,35 +6657,37 @@ class maser_v_theta(_maser_base_):
         
             #### Actually plotting ####
             
-            P.clf()
-            P.imshow( zs, aspect='auto', vmin = vmin, vmax = vmax, cmap = cmap, \
+            P.close()
+            fig, ax = P.subplots(nrows=1, ncols=1, figsize = (5.5,4.5))
+            fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.88 )
+            im = ax.imshow( zs, aspect='auto', vmin = vmin, vmax = vmax, cmap = cmap, origin='lower', \
                       extent = [freqmin, freqmax, self.thetas.min() - dtheta/2., self.thetas.max() + dtheta/2.] )
             
             # Axis limits 
-            P.xlim( freqmin, freqmax )
-            P.ylim( self.thetas.min() , self.thetas.max() )
+            ax.set_xlim( freqmin, freqmax )
+            ax.set_ylim( self.thetas.min() , self.thetas.max() )
             
             # If frequency conversion not requested, makes x-axis frequency ticks in scientific notation
             if not convert_freq:
-                P.ticklabel_format( axis='x', style = 'sci', scilimits = (0,0) )
+                ax.set_ticklabel_format( axis='x', style = 'sci', scilimits = (0,0) )
             
             # X-axis label
-            P.xlabel(xlabel)
+            ax.set_xlabel(xlabel)
             
             # Y-axis label depends on theta units
             if self.units in ['degrees','deg','d']:
-                P.ylabel(r'$\theta$ [$^{\circ}$]')
+                ax.set_ylabel(r'$\theta$ [$^{\circ}$]')
             else:
-                P.ylabel(r'$\theta$ [radians]')
+                ax.set_ylabel(r'$\theta$ [radians]')
             
             # Plot title
             if subtitle is None:
-                P.title( fig_title )
+                ax.set_title( fig_title )
             else:
-                P.title( fig_title + '\n' + subtitle )
+                ax.set_title( fig_title + '\n' + subtitle )
             
             # Colorbar
-            cbar = P.colorbar()
+            cbar = fig.colorbar( im, ax=ax )
             if vmax <= 1e-2:
                 cbar.ax.ticklabel_format( axis='y', style = 'sci', scilimits = (0,0) )
         
@@ -6767,12 +6790,11 @@ class maser_v_theta(_maser_base_):
                                                        convert_freq = convert_freq, tau_scale = tau_scale, interp = interp, \
                                                        subtitle = subtitle, figname = figname, show = show, verbose = verbose )
     
-    def plot_theta_tau( self, plotvalue, freqoff = 0, betamax = None, plotbetamax = None, convert_freq = True, \
-                        interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
+    def plot_theta_tau( self, plotvalue, freqoff = 0, betamax = None, plotbetamax = None, contours = False, \
+                        convert_freq = True, tau_scale = 'linear', interp = 'cubic', subtitle = None, label = None, \
+                        label_loc = 'left', figname = None, show = True, verbose = True ):
         """
         Plots desired value at some offset from line center vs. theta (x-axis) and total optical depth (y-axis).
-        
-        Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), or fracu (stoku/stoki).
         
         Intended to be run *after* stokes at a given point in cloud have been read in for a range of beta values
         with cloud_end_stokes method.
@@ -6781,13 +6803,21 @@ class maser_v_theta(_maser_base_):
             
             plotvalue       String
                                 What to plot. Options are 'mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 
-                                'fracq' (for stokq/stoki), or 'fracu' for (stoku/stoki).
+                                'fracq' (for stokq/stoki), 'fracu' for (stoku/stoki), 'quv' for sqrt(q^2+u^2)/i-v/i, 
+                                'mlmc' for (ml-mc), or 'vmetric' for ( Vmax - Vmin ) / Imax.
+                                Note: 'vmetric' plotvalue only available for freqoff = None. 
             
         Optional Parameters:
             
-            freqoff         Integer
+            freqoff         Integer, list of Integers, or None
                                 [ Default = 0 ]
-                                Offset index (with respect to the central frequency in omegabar) to be plotted.
+                                If a single integer, value gives the offset index (with respect to the central  
+                                frequency in omegabar) to be plotted.
+                                If a list of integers, individual values should be the same as in the case of a 
+                                single integer, but plotted output will be summed across those wavelength bins.
+                                If None, calculates the desired plotvalue from the peak stokes values across 
+                                angular frequency for each theta and log(R/gOmega). 
+                                NOTE: None is NOT the same as 0!!!
             
             betamax         None or Float 
                                 [ Default = None ]
@@ -6801,10 +6831,18 @@ class maser_v_theta(_maser_base_):
                                 the same as other figures despite not having beta up to that value for this
                                 parameter set.)
                         
+            contours        Boolean
+                                [ Default = False ]
+                                Whether (True) or not (False) to overplot contours on the image.
+                        
             convert_freq    Boolean 
                                 [ Default = True ]
                                 Whether to convert omegabar from angular frequency (s^-1) to frequency (MHz) 
                                 (if True) or not (if False).
+            
+            tau_scale       String ('log' or 'linear')
+                                [ Default = 'linear' ]
+                                Scale for the y-axis (total optical depth) on the plot.
                                 
             interp          String
                                 [ Default = 'cubic' ]
@@ -6815,6 +6853,14 @@ class maser_v_theta(_maser_base_):
                                 [ Default = None ]
                                 If not None, provided string will be added to title as a second line. Intended 
                                 to be used to indicate faraday polarization values used if not 0.
+                        
+            label          None or String
+                                [ Default = None ]
+                                Text to label inside plot.
+                        
+            label_loc      String: 'left' or 'right'
+                                [ Default = 'left' ]
+                                The (lower) corner of the plot in which the label (if provided) will be placed.
                                 
             figname         None or String
                                 [ Default = None ]
@@ -6902,10 +6948,17 @@ class maser_v_theta(_maser_base_):
                         Nbetas = Nbeta_per_theta.min()
         
         # Makes sure that specified plotvalue is allowed:
-        if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu']:
+        if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu', 'vmetric', 'quv', 'mlmc']:
             err_msg =  "MASER_V_THETA.PLOT_THETA_TAU ERROR:    plotvalue '{0}' not recognized.\n".format(plotvalue) + \
                 ' '*12+"                                       Allowed values are 'mc', 'ml', 'evpa', 'stoki', 'stokq',\n" + \
                 ' '*12+"                                       'stoku', 'stokv', 'fracq', or 'fracu'."
+            raise ValueError(err_msg)
+        
+        # Checks that tau_scale is an acceptable value
+        tau_scale = tau_scale.lower()
+        if tau_scale not in ['linear','log']:
+            err_msg = "tau_scale '{0}' not recognized.\n".format(tau_scale) + \
+                      "        Allowed values are 'linear' or 'log'."
             raise ValueError(err_msg)
         
         
@@ -6959,16 +7012,24 @@ class maser_v_theta(_maser_base_):
         
         #### Determining which array to plot ####
         
+        
+        
         # Start with Stokes i
         if plotvalue == 'stoki':
             
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    thetaline = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
             
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes i'
@@ -6978,12 +7039,20 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'stokq':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stokq[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes q'
@@ -6993,12 +7062,20 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'stoku':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stoku[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes u'
@@ -7008,27 +7085,48 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'stokv':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    min_stokv = np.min( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    thetaline = np.array([ ( max_stokv[j] - min_stokv[j] ) for j in range(ibmax+1) ])
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'Range in Stokes v'
+                    cmap = 'viridis'
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'Stokes v'
+                    cmap = 'RdBu'
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'Stokes v'
+                    cmap = 'RdBu'
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
-        
-            # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes v'
-            cmap = 'RdBu'
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
         # Next, fractional stokes q
         elif plotvalue == 'fracq':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta          ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stokq[ j, peak_idx[j] ] / self.masers[ theta ].stacked_stoki[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) / np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) 
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes q/i'
@@ -7038,12 +7136,21 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'fracu':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta          ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stoku[ j, peak_idx[j] ] / self.masers[ theta ].stacked_stoki[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) / np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) 
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes u/i'
@@ -7053,12 +7160,23 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'ml':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_ml[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = np.sqrt( qsum**2 + usum**2 ) / isum
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'$m_l$'
@@ -7068,30 +7186,146 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'mc':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    
+                    # Calculation if we want peak mc to be the mc where stokes v is max, not the maximum value of mc
+                    #max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    #peak_idx = np.array([ np.where( self.masers[theta].stacked_stokv[j,:] == x )[0][0] for j,x in enumerate(max_stokv) ])
+                    #thetaline = np.array([ max_stokv[j] / self.masers[ theta ].stacked_stoki[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                    
+                    # Calculation if we want the peak mc to mean the actual max mc
+                    thetaline = np.max( self.masers[theta].stacked_mc[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'$m_c$'
+                    cmap = 'viridis'
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta       ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'$m_c$'
+                    cmap = 'RdBu'
+                else:
+                    vsum = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = vsum / isum
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'$m_c$'
+                    cmap = 'RdBu'
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
-        
-            # Sets plot title & colormap, while we're here
-            fig_title = r'$m_c$'
-            cmap = 'RdBu'
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
         # Finally, does evpa
         elif plotvalue == 'evpa':
         
             # Build array with plotable range
-            temparray = ( self.masers[ self.thetas[0] ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = ( self.masers[ theta      ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
+            # Note: np.arctan2 returns values between -pi and +pi, with 0.5 * np.arctan2 returning values between
+            #       -pi/2 and +pi/2. Applying + pi % pi to this changes the range to 0 - pi, flipping only the negative
+            #       values to the new quadrant.
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_evpa[ j, peak_idx[j] ] + pi for j in range(ibmax+1) ]) % pi
+                elif isinstance(freqoff,int):
+                    thetaline = ( self.masers[ theta      ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
+                else:
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = 0.5 * np.arctan2( usum, qsum )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'EVPA'
+            cmap = 'RdBu'
+        
+        # New option: vmetric plots (Vmax - Vmin) / Imax (only available with freqoff=None)
+        elif plotvalue == 'vmetric':
+        
+            # Build array with plotable range
+            for i,theta in enumerate(self.thetas):
+                max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                min_stokv = np.min( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                thetaline = np.array([ ( max_stokv[j] - min_stokv[j] ) / max_stoki[j] for j in range(ibmax+1) ])
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
+    
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$(V_{max} - V_{min}) / I_{max}$'
+            cmap = 'viridis'
+    
+        # New option: quv plots sqrt( q**2 + u**2 )/i - v/i
+        elif plotvalue == 'quv':
+    
+            # Build array with plotable range
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx  = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    qupeak    = np.sqrt( np.array([ self.masers[ theta ].stacked_stokq[ j, peak_idx[j] ] for j in range(ibmax+1) ])**2 + \
+                                         np.array([ self.masers[ theta ].stacked_stoku[ j, peak_idx[j] ] for j in range(ibmax+1) ])**2 )
+                    thetaline = ( qupeak - max_stokv ) / max_stoki
+                elif isinstance(freqoff,int):
+                    thetaline = np.sqrt( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]**2 + \
+                                         self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]**2 ) - \
+                                         self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+                    thetaline = thetaline / self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    vsum = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = np.sqrt( qsum**2 + usum**2 ) - vsum
+                    thetaline = thetaline / isum
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
+    
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$(q^2 + u^2)^{1/2}/i - v/i$'
+            cmap = 'RdBu'
+    
+        # New option: mlmc plots ml - mc
+        elif plotvalue == 'mlmc':
+    
+            # Build array with plotable range
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx  = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    max_mc    = np.max( self.masers[theta].stacked_mc[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    ml_peak   = np.array([ self.masers[ theta ].stacked_ml[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                    thetaline = ml_peak - max_mc
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_ml[ : ibmax+1 , jcenter + freqoff ] - \
+                                self.masers[ theta ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    vsum = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = ( np.sqrt( qsum**2 + usum**2 ) - vsum ) / isum
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
+    
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$m_l - m_c$'
             cmap = 'RdBu'
             
             
@@ -7120,12 +7354,15 @@ class maser_v_theta(_maser_base_):
             # Creates grid of desired theta and beta values and regrids
             #   Again, thetagrid and betagrid have shape ( 1001, 36 )
             thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
-            betagoal  = np.linspace( self.betas[0], betamax, 1001)
-            thetagrid, betagrid = np.meshgrid( thetagoal, betagoal )
             
-            # Sets aside resolution of each for later use
-            dtheta = thetagoal[1] - thetagoal[0]
-            dbeta  = betagoal[1]  - betagoal[0]
+            # Creates grid of desired total optical depths (in requested scale) and regrids. 
+            if tau_scale == 'log':
+                betagoal = np.logspace( log10(self.betas[0]), log10(betamax), 1001)
+            else:
+                betagoal = np.linspace( self.betas[0], betamax, 1001)
+            
+            # Creates grids of each value
+            thetagrid, betagrid = np.meshgrid( thetagoal, betagoal )
             
             # Re-grids data array with desired interpolation
             # Resulting zs has shape ( Nthetagoal, Nbetagoal ), like thetagrid and betagrid
@@ -7159,31 +7396,98 @@ class maser_v_theta(_maser_base_):
         
             #### Actually plotting ####
             
-            P.clf()
-            P.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
-                      extent = [self.thetas.min() - dtheta/2., self.thetas.max() + dtheta/2., \
-                      self.betas[0] - dbeta/2., betamax + dbeta/2.] )
+            P.close()
+            fig, ax = P.subplots(nrows=1, ncols=1, figsize = (5.5,4.5))
+            fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.88 )
+                
+            dtheta = thetagoal[1] - thetagoal[0]
+            
+            # Plots image
+            if tau_scale == 'log':
+                # Get correct bin ends on y-scale
+                dy = log10(betagoal[1]/betagoal[0])
+                #print('dy = {0}'.format(dy))
+                theta_plot = np.linspace( thetagoal[0]-dtheta/2., thetagoal[-1]+dtheta/2., thetagoal.size+1)
+                beta_plot  = np.logspace( log10(self.betas[0]) - dy/2. , log10(betamax) + dy/2., betagoal.size+1 )
+                #print('theta_plot from {0} to {1}'.format(theta_plot[0], theta_plot[-1]))
+                #print('beta_plot from {0} to {1}'.format(beta_plot[0], beta_plot[-1]))
+                im = ax.pcolormesh( theta_plot, beta_plot, zs, vmin = vmin, vmax = vmax, cmap = cmap )
+                ax.set_yscale( 'log' )
+            else:
+                dbeta  = betagoal[1]  - betagoal[0]
+                im = ax.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
+                                extent = [thetagoal[0] - dtheta/2., thetagoal[-1] + dtheta/2., \
+                                betagoal[0] - dbeta/2., betagoal[-1] + dbeta/2.] )
+            
+            
+        
+            # Adds contour, if requested
+            if contours and plotvalue != 'evpa':
+                levels = gen_contour_levels( vmin, vmax, min_contours = 4 )
+                contour_color = [ 'w', ]*len(levels)
+                if cmap == 'RdBu':
+                    #print(levels)
+                    contour_color[ levels.index(0.0) ] = 'lightgray'
+                _cs2 = ax.contour( thetagrid, betagrid, zs, levels=levels, origin='lower', colors=contour_color )
+            
+            # If making contours for evpa plot, central contour will need to be darker
+            elif contours:
+                levels_degrees = [ 30, 60, 90, 120, 150 ]
+                levels = [ float(x) * pi / 180. for x in levels_degrees ]
+                _cs2 = ax.contour( thetagrid, betagrid, zs, levels=levels, origin='lower', \
+                    colors=['w','w','lightgray','w','w'] )
             
             # Axis limits
-            P.xlim( self.thetas.min(), self.thetas.max() )
-            P.ylim( self.betas[0], plotbetamax )
+            ax.set_xlim( self.thetas.min(), self.thetas.max() )
+            ax.set_ylim( self.betas[0], plotbetamax )
             
             # Axis labels; x-axis label depends on theta units
             if self.units in ['degrees','deg','d']:
-                P.xlabel(r'$\theta$ [$^{\circ}$]')
+                ax.set_xlabel(r'$\theta$ [$^{\circ}$]')
             else:
-                P.xlabel(r'$\theta$ [radians]')
-            P.ylabel(r'Total $\tau$')
+                ax.set_xlabel(r'$\theta$ [radians]')
+            ax.set_ylabel(r'Total $\tau$')
             
-            # Colorbar
-            cbar = P.colorbar()
-            if vmax <= 1e-2:
+            # Makes colorbar; will have ticks at overplotted contour lines, if contours requested
+            if interp is not None:
+                
+                # Makes just the colorbar with correct ticks
+                if plotvalue == 'evpa':
+                    levels_degrees = [ 0, 30, 60, 90, 120, 150, 180 ]
+                    cbar = fig.colorbar( im, ax=ax, ticks = [ float(x)*pi/180. for x in levels_degrees ] )
+                    tick_labels = ['0', '', '', r'$\pi$/2', '', '', r'$\pi$']
+                    cbar.ax.set_yticklabels( tick_labels )
+                    if contours:
+                        cbar.add_lines( _cs2 )
+                    
+                elif contours:
+                    cbar = fig.colorbar( im, ax=ax, ticks = levels )
+                    cbar.add_lines( _cs2 )
+                
+                else:
+                    cbar = fig.colorbar( im, ax=ax )
+                    
+            
+            # If no interpolation, can only make contour plot, so just labels contours on figure, no colorbar
+            else:
+                if plotvalue == 'evpa':
+                    mk_clabel = lambda crad : str( round( crad * 180. / pi ) )
+                    ax.clabel(_cs2, fontsize=9, inline=1, fmt=mk_clabel, colors='k' )
+                    cbar = None
+                else:
+                    ax.clabel(_cs2, fontsize=9, inline=1, fmt='%.1e', colors='k' )
+                    cbar = None
+            
+            # Converts colorbar ticks to scientific notation if they're small; won't affect evpa plots
+            if cbar is not None and vmax <= 1e-2:
                 cbar.ax.ticklabel_format( axis='y', style = 'sci', scilimits = (0,0) )
             
             # Determine plot title; depends on frequency with respect to line center
-            if freqoff == 0:
+            if isinstance(freqoff,int) and freqoff == 0:
                 freqtitle = 'Line Center'
-            else:
+            elif freqoff is None:
+                freqtitle = 'Peak'
+            elif isinstance(freqoff,int):
                 # Gets frequency offset in ANGULAR freq (s^-1)
                 dfreq = self.omegabar[ jcenter + freqoff ] - self.omegabar[jcenter]
             
@@ -7204,6 +7508,41 @@ class maser_v_theta(_maser_base_):
                 # If no frequency conversion requested, makes frequency label
                 else:
                     freqtitle = r'$\varpi =$ {0:.2e}'.format(dfreq) + r' s$^{-1}$ from Line Center'
+            else:
+                # Gets frequency offset in ANGULAR freq (s^-1)
+                dfreq = self.omegabar[ jcenter + np.max(freqoff) ] - self.omegabar[ jcenter + np.min(freqoff) ]
+                midfreq = ( self.omegabar[ jcenter + np.max(freqoff) + self.k ] + self.omegabar[ jcenter + np.min(freqoff) + self.k ] ) / 2.
+            
+                 # If frequency conversion to MHz is requested, converts and generates freq_string label
+                if convert_freq:
+            
+                    # Converts from angular frequency to frequency & Creates label
+                    dfreq = dfreq / (2.*pi)
+                    midfreq = midfreq / (2.*pi)
+                    if abs(midfreq) < 1e-7:
+                        freqtitle = 'at Line Center'
+                    elif midfreq < 1000.0:
+                        freqtitle = '{0} Hz from Line Center'.format( round(midfreq,0) )
+                    elif midfreq >= 1e3 and midfreq < 1e6:
+                        freqtitle = '{0} kHz from Line Center'.format( round(midfreq*1e-3,0) )
+                    elif midfreq >= 1e6 and midfreq < 1e9:
+                        freqtitle = '{0} MHz from Line Center'.format( round(midfreq*1e-6,0) )
+                    elif midfreq >= 1e9:
+                        freqtitle = '{0} GHz from Line Center'.format( round(midfreq*1e-9,0) )
+                    
+                    if dfreq < 1000.0:
+                        freqtitle += ' ({0} Hz wide)'.format( round(dfreq,0) )
+                    elif dfreq >= 1e3 and dfreq < 1e6:
+                        freqtitle += ' ({0} kHz wide)'.format( round(dfreq*1e-3,0) )
+                    elif dfreq >= 1e6 and dfreq < 1e9:
+                        freqtitle += ' ({0} MHz wide)'.format( round(dfreq*1e-6,0) )
+                    elif dfreq >= 1e9:
+                        freqtitle += ' ({0} GHz wide)'.format( round(dfreq*1e-9,0) )
+        
+                # If no frequency conversion requested, makes frequency label
+                else:
+                    freqtitle = r'$\varpi =$ {0:.2e}'.format(midfreq) + r' s$^{-1}$ from Line Center (' + \
+                                '{0:.2e}'.format(dfreq) + r' s$^{-1}$ wide)'
             
             # Combines and adds plot title
             if subtitle is None:
@@ -7211,6 +7550,20 @@ class maser_v_theta(_maser_base_):
             else:
                 P.title( fig_title + r' at Cloud End, ' + freqtitle + '\n' + subtitle )
         
+            # Sets plot label, if requested.
+            xmin, xmax = ax.get_xlim()
+            ymin, ymax = ax.get_ylim()
+            if label is not None:
+                margin_size = 0.02
+                if tau_scale == 'linear':
+                    ytext = ymin + (ymax-ymin)*margin_size
+                else:
+                    ytext = ymin * 10.**( margin_size * log10(ymax/ymin) )
+                if label_loc == 'left':
+                    ax.text( xmin + (xmax-xmin)*margin_size, ytext, label, ha='left', va='bottom', fontsize='large')
+                elif label_loc == 'right':
+                    ax.text( xmin + (xmax-xmin)*(1.-margin_size),ytext, label, ha='right', va='bottom', fontsize='large')
+            
             # Saves figure if requested
             if figname is not None:
                 try:
@@ -7523,7 +7876,7 @@ class maser_v_theta(_maser_base_):
                                 If False, no normalization is done.
                                 If 'gOmega', plots R / gOmega, where gOmega is the full width of the
                                 Zeeman splitting (across all substates), calculated as 
-                                2*k*omegabar_bin_width.
+                                2*k*omegabar_bin_width, and converted to frequency.
                                 If Float or Integer, plots R / Gamma, where Gamma is the loss rate,
                                 and assumes that the value provided for norm is the loss rate, 
                                 Gamma, in inverse seconds.
@@ -7696,8 +8049,8 @@ class maser_v_theta(_maser_base_):
         # Does the same if we're normalizing by gOmega
         elif isinstance( norm, str ):
             
-            # Calculates gOmega
-            gOmega = 2.0 * float(self.k) * float( self.omegabar[1]-self.omegabar[0] )
+            # Calculates gOmega and converts from angular frequency to frequency
+            gOmega = float(self.k) * float( self.omegabar[1]-self.omegabar[0] )  / pi 
             
             # Array to plot is R_beta_theta divided by that value
             temparray = R_beta_theta / gOmega
@@ -7857,7 +8210,9 @@ class maser_v_theta(_maser_base_):
             
             plotvalue       String
                                 What to plot. Options are 'mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 
-                                'fracq' (for stokq/stoki), or 'fracu' for (stoku/stoki).
+                                'fracq' (for stokq/stoki), 'fracu' for (stoku/stoki), 'quv' for sqrt(q^2+u^2)/i-v/i, 
+                                'mlmc' for (ml-mc), or 'vmetric' for ( Vmax - Vmin ) / Imax.
+                                Note: 'vmetric' plotvalue only available for freqoff = None. 
             
             R_beta_theta    2D NumPy Array
                                 The stimulated emission rate, in inverse seconds, at the cloud end. 2-dimensional 
@@ -7866,9 +8221,15 @@ class maser_v_theta(_maser_base_):
             
         Optional Parameters:
             
-            freqoff         Integer
+            freqoff         Integer, list of Integers, or None
                                 [ Default = 0 ]
-                                Offset index (with respect to the central frequency in omegabar) to be plotted.
+                                If a single integer, value gives the offset index (with respect to the central  
+                                frequency in omegabar) to be plotted.
+                                If a list of integers, individual values should be the same as in the case of a 
+                                single integer, but plotted output will be summed across those wavelength bins.
+                                If None, calculates the desired plotvalue from the peak stokes values across 
+                                angular frequency for each theta and log(R/gOmega). 
+                                NOTE: None is NOT the same as 0!!!
             
             betamax         None or Float 
                                 [ Default = None ]
@@ -8018,7 +8379,7 @@ class maser_v_theta(_maser_base_):
                     Nbetas = Nbeta_per_theta.min()
         
         # Makes sure that specified plotvalue is allowed:
-        if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu']:
+        if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu', 'vmetric', 'quv', 'mlmc']:
             err_msg = method_name + ": plotvalue '{0}' not recognized.\n".format(plotvalue) + \
                         ' '*(12+len(method_name)+2) + "Allowed values are 'mc', 'ml', 'evpa', 'stoki', 'stokq',\n" + \
                         ' '*(12+len(method_name)+2) + "'stoku', 'stokv', 'fracq', or 'fracu'."
@@ -8076,12 +8437,12 @@ class maser_v_theta(_maser_base_):
         # Makes sure that all maser objects in masers dictionary have same k value
         ks_for_theta = np.unique( np.array([ self.masers[ theta ].k for theta in self.thetas ]) )
         if ks_for_theta.size > 1:
-            raise ValueError( 'MASER_V_THETA.PLOT_V_DIDV ERROR:    Maser objects in masers dictionary must all have same value of k.' + \
+            raise ValueError( method_name + ': Maser objects in masers dictionary must all have same value of k.' + \
                               ' ({0} values found.)'.format( ks_for_theta.size ) )
         
         # Checks top-level object k value to make sure it's consistent with these
         if self.k not in ks_for_theta:
-            raise ValueError( 'MASER_V_THETA.PLOT_V_DIDV ERROR:    Maser_v_theta object must have the same value of k as objects in masers dictionary.' )
+            raise ValueError( method_name + ': Maser_v_theta object must have the same value of k as objects in masers dictionary.' )
         
         # Actually sets aside index of line center frequency
         jcenter = int( Nfreq / 2 )
@@ -8094,12 +8455,18 @@ class maser_v_theta(_maser_base_):
         if plotvalue == 'stoki':
             
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    thetaline = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
             
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes i'
@@ -8109,12 +8476,20 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'stokq':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stokq[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes q'
@@ -8124,12 +8499,20 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'stoku':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stoku[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes u'
@@ -8139,27 +8522,48 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'stokv':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    min_stokv = np.min( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    thetaline = np.array([ ( max_stokv[j] - min_stokv[j] ) for j in range(ibmax+1) ])
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'Range in Stokes v'
+                    cmap = 'viridis'
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'Stokes v'
+                    cmap = 'RdBu'
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'Stokes v'
+                    cmap = 'RdBu'
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
-        
-            # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes v'
-            cmap = 'RdBu'
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
         # Next, fractional stokes q
         elif plotvalue == 'fracq':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta          ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stokq[ j, peak_idx[j] ] / self.masers[ theta ].stacked_stoki[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) / np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) 
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes q/i'
@@ -8169,12 +8573,21 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'fracu':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ self.thetas[0] ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta          ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_stoku[ j, peak_idx[j] ] / self.masers[ theta ].stacked_stoki[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ] / self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    thetaline = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) / np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 ) 
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'Stokes u/i'
@@ -8184,12 +8597,23 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'ml':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_ml[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_ml[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = np.sqrt( qsum**2 + usum**2 ) / isum
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'$m_l$'
@@ -8199,31 +8623,149 @@ class maser_v_theta(_maser_base_):
         elif plotvalue == 'mc':
         
             # Build array with plotable range
-            temparray = self.masers[ self.thetas[0] ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = self.masers[ theta      ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    
+                    # Calculation if we want peak mc to be the mc where stokes v is max, not the maximum value of mc
+                    #max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    #peak_idx = np.array([ np.where( self.masers[theta].stacked_stokv[j,:] == x )[0][0] for j,x in enumerate(max_stokv) ])
+                    #thetaline = np.array([ max_stokv[j] / self.masers[ theta ].stacked_stoki[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                    
+                    # Calculation if we want the peak mc to mean the actual max mc
+                    thetaline = np.max( self.masers[theta].stacked_mc[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'$m_c$'
+                    cmap = 'viridis'
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta       ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'$m_c$'
+                    cmap = 'RdBu'
+                else:
+                    vsum = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = vsum / isum
+                    # Sets plot title & colormap, while we're here
+                    fig_title = r'$m_c$'
+                    cmap = 'RdBu'
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
-        
-            # Sets plot title & colormap, while we're here
-            fig_title = r'$m_c$'
-            cmap = 'RdBu'
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
         # Finally, does evpa
         elif plotvalue == 'evpa':
         
             # Build array with plotable range
-            temparray = ( self.masers[ self.thetas[0] ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
-            temparray = temparray.reshape( temparray.size, 1 )
-            for theta in self.thetas[1:]:
-                thetaline = ( self.masers[ theta      ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
+            # Note: np.arctan2 returns values between -pi and +pi, with 0.5 * np.arctan2 returning values between
+            #       -pi/2 and +pi/2. Applying + pi % pi to this changes the range to 0 - pi, flipping only the negative
+            #       values to the new quadrant.
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    thetaline = np.array([ self.masers[ theta ].stacked_evpa[ j, peak_idx[j] ] + pi for j in range(ibmax+1) ]) % pi
+                elif isinstance(freqoff,int):
+                    thetaline = ( self.masers[ theta      ].stacked_evpa[ : ibmax+1 , jcenter + freqoff ] + pi ) % pi
+                else:
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = 0.5 * np.arctan2( usum, qsum )
                 thetaline = thetaline.reshape( thetaline.size, 1)
-                temparray = np.hstack(( temparray, thetaline ))
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
         
             # Sets plot title & colormap, while we're here
             fig_title = r'EVPA'
             cmap = 'RdBu'
+        
+        # New option: vmetric plots (Vmax - Vmin) / Imax (only available with freqoff=None)
+        elif plotvalue == 'vmetric':
+            
+            # Build array with plotable range
+            for i,theta in enumerate(self.thetas):
+                max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                min_stokv = np.min( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                thetaline = np.array([ ( max_stokv[j] - min_stokv[j] ) / max_stoki[j] for j in range(ibmax+1) ])
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$(V_{max} - V_{min}) / I_{max}$'
+            cmap = 'viridis'
+        
+        # New option: quv plots sqrt( q**2 + u**2 )/i - v/i
+        elif plotvalue == 'quv':
+    
+            # Build array with plotable range
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx  = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    max_stokv = np.max( self.masers[theta].stacked_stokv[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    qupeak    = np.sqrt( np.array([ self.masers[ theta ].stacked_stokq[ j, peak_idx[j] ] for j in range(ibmax+1) ])**2 + \
+                                         np.array([ self.masers[ theta ].stacked_stoku[ j, peak_idx[j] ] for j in range(ibmax+1) ])**2 )
+                    thetaline = ( qupeak - max_stokv ) / max_stoki
+                elif isinstance(freqoff,int):
+                    thetaline = np.sqrt( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + freqoff ]**2 + \
+                                         self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + freqoff ]**2 ) - \
+                                         self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + freqoff ]
+                    thetaline = thetaline / self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    vsum = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = np.sqrt( qsum**2 + usum**2 ) - vsum
+                    thetaline = thetaline / isum
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
+    
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$(q^2 + u^2)^{1/2}/i - v/i$'
+            cmap = 'RdBu'
+        
+        # New option: mlmc plots ml - mc
+        elif plotvalue == 'mlmc':
+        
+            # Build array with plotable range
+            for i,theta in enumerate(self.thetas):
+                if freqoff is None:
+                    max_stoki = np.max( self.masers[theta].stacked_stoki[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    peak_idx  = np.array([ np.where( self.masers[theta].stacked_stoki[j,:] == x )[0][0] for j,x in enumerate(max_stoki) ])
+                    max_mc    = np.max( self.masers[theta].stacked_mc[ : ibmax+1 , 2*self.k:-2*self.k ], axis=1 )
+                    ml_peak   = np.array([ self.masers[ theta ].stacked_ml[ j, peak_idx[j] ] for j in range(ibmax+1) ])
+                    thetaline = ml_peak - max_mc
+                elif isinstance(freqoff,int):
+                    thetaline = self.masers[ theta ].stacked_ml[ : ibmax+1 , jcenter + freqoff ] - \
+                                self.masers[ theta ].stacked_mc[ : ibmax+1 , jcenter + freqoff ]
+                else:
+                    isum = np.sum( self.masers[ theta ].stacked_stoki[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    qsum = np.sum( self.masers[ theta ].stacked_stokq[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    usum = np.sum( self.masers[ theta ].stacked_stoku[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    vsum = np.sum( self.masers[ theta ].stacked_stokv[ : ibmax+1 , jcenter + np.array(freqoff) ], axis=1 )
+                    thetaline = ( np.sqrt( qsum**2 + usum**2 ) - vsum ) / isum
+                thetaline = thetaline.reshape( thetaline.size, 1)
+                if i != 0:
+                    temparray = np.hstack(( temparray, thetaline ))
+                else:
+                    temparray = np.array( thetaline )
+        
+            # Sets plot title & colormap, while we're here
+            fig_title = r'$m_l - m_c$'
+            cmap = 'RdBu'
+            
+            
             
             
         
@@ -8235,41 +8777,43 @@ class maser_v_theta(_maser_base_):
         if temparray.size != 0:
             
             # Calculates gOmega
-            gOmega = 2.0 * float(self.k) * float( self.omegabar[1]-self.omegabar[0] )
+            gOmega = float(self.k) * float( self.omegabar[1]-self.omegabar[0] )  / pi 
             
             # Calculates array of log(R/gOmega); should still have shape ( Nbeta, Ntheta )
             logRpts = np.log10( R_beta_theta / gOmega )
             
-            if verbose:
-                print('Regridding data...')
             
-            # Ravels temparray to prepare for regridding
-            # Before ravel, has shape (beta, theta)
-            temparray = np.ravel( temparray )
+            if interp is not None:
+                if verbose:
+                    print('Regridding data...')
+            
+                # Ravels temparray to prepare for regridding
+                # Before ravel, has shape (beta, theta)
+                temparray = np.ravel( temparray )
         
-            # Creates grid of existing (theta, beta) points
-            # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
-            thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+                # Creates grid of existing (theta, beta) points
+                # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
+                thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
             
-            # Creates point locations, but instead of betapts values, want 
-            #   values of log10(R_theta_beta/gOmega)
-            thetapts = np.ravel( thetapts )
-            logRpts  = np.ravel( logRpts )
-            points   = np.vstack(( thetapts, logRpts )).T
+                # Creates point locations, but instead of betapts values, want 
+                #   values of log10(R_theta_beta/gOmega)
+                thetapts = np.ravel( thetapts )
+                logRpts  = np.ravel( logRpts )
+                points   = np.vstack(( thetapts, logRpts )).T
             
-            # Creates grid of desired theta and log(R/gOmega) values and regrids
-            #   Again, thetagrid and logRgrid have shape ( 1001, 36 )
-            thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
-            logRgoal  = np.linspace( np.nanmin(logRpts), np.nanmax(logRpts), 1001)
-            thetagrid, logRgrid = np.meshgrid( thetagoal, logRgoal )
+                # Creates grid of desired theta and log(R/gOmega) values and regrids
+                #   Again, thetagrid and logRgrid have shape ( 1001, 36 )
+                thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
+                logRgoal  = np.linspace( np.nanmin(logRpts), np.nanmax(logRpts), 1001)
+                thetagrid, logRgrid = np.meshgrid( thetagoal, logRgoal )
             
-            # Sets aside resolution of each for later use
-            dtheta = thetagoal[1] - thetagoal[0]
-            dlogR  = logRgoal[1]  - logRgoal[0]
+                # Sets aside resolution of each for later use
+                dtheta = thetagoal[1] - thetagoal[0]
+                dlogR  = logRgoal[1]  - logRgoal[0]
             
-            # Re-grids data array with desired interpolation
-            # Resulting zs has shape ( Nthetagoal, NlogRgoal )
-            zs = griddata( points, temparray, (thetagrid, logRgrid), method=interp)
+                # Re-grids data array with desired interpolation
+                # Resulting zs has shape ( Nthetagoal, NlogRgoal )
+                zs = griddata( points, temparray, (thetagrid, logRgrid), method=interp)
             
             
             
@@ -8279,20 +8823,41 @@ class maser_v_theta(_maser_base_):
             
         
         
-            #### Figures out min and max for color ####
+                #### Figures out min and max for color ####
             
-            if verbose:
-                print('Plotting figure...')
+                if verbose:
+                    print('Plotting figure...')
             
-            # zs shape is (betagoal, thetagoal). no freq edge effects
-            vmax = np.nanmax(np.abs( zs ))
-            if plotvalue == 'evpa':
-                vmin = 0.0
-                vmax = pi
-            elif cmap == 'RdBu':
-                vmin = -1.0 * vmax
+                # zs shape is (betagoal, thetagoal). no freq edge effects
+                vmax = np.nanmax(np.abs( zs ))
+                if plotvalue == 'evpa':
+                    vmin = 0.0
+                    vmax = pi
+                elif cmap == 'RdBu':
+                    vmin = -1.0 * vmax
+                else:
+                    vmin = 0.0
+            
+            # Does the same if skipping interpolation
             else:
-                vmin = 0.0
+                if verbose:
+                    print('Plotting figure...')
+            
+                # zs shape is (betagoal, thetagoal). no freq edge effects
+                vmax = np.nanmax(np.abs( temparray ))
+                if plotvalue == 'evpa':
+                    vmin = 0.0
+                    vmax = pi
+                elif cmap == 'RdBu':
+                    vmin = -1.0 * vmax
+                else:
+                    vmin = 0.0
+                
+            
+            
+            
+            
+            
             
             
             
@@ -8306,28 +8871,49 @@ class maser_v_theta(_maser_base_):
             P.close()
             fig, ax = P.subplots(nrows=1, ncols=1, figsize = (5.5,4.5))
             fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.88 )
-            
-            # Plots image
-            im = ax.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
-                            extent = [self.thetas.min() - dtheta/2., self.thetas.max() + dtheta/2., \
-                            logRgoal[0] - dlogR/2., logRgoal[-1] + dlogR/2.] )
-            
-            # Adds contour, if requested
-            if contours:
                 
-                # Determines contour levels
+            # If interpolation is being performed, plots image with optional overlayed (monochromatic) contours
+            if interp is not None:
+                
+                # Plots image
+                im = ax.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
+                                extent = [self.thetas.min() - dtheta/2., self.thetas.max() + dtheta/2., \
+                                logRgoal[0] - dlogR/2., logRgoal[-1] + dlogR/2.] )
+        
+                # Adds contour, if requested
+                if contours and plotvalue != 'evpa':
+                    levels = gen_contour_levels( vmin, vmax, min_contours = 4 )
+                    contour_color = [ 'w', ]*len(levels)
+                    if cmap == 'RdBu':
+                        #print(levels)
+                        contour_color[ levels.index(0.0) ] = 'lightgray'
+                    _cs2 = ax.contour( thetagrid, logRgrid, zs, levels=levels, origin='lower', colors=contour_color )
+                
+                # If making contours for evpa plot, central contour will need to be black
+                elif contours:
+                    levels_degrees = [ 30, 60, 90, 120, 150 ]
+                    levels = [ float(x) * pi / 180. for x in levels_degrees ]
+                    _cs2 = ax.contour( thetagrid, logRgrid, zs, levels=levels, origin='lower', \
+                        colors=['w','w','lightgray','w','w'] )
+                    
+                    
+            # If no interpolation, plots contours only but in a colormap gradient with labels
+            else:
                 if plotvalue == 'evpa':
-                    levels = [ x*pi for x in [0.25,0.75] ]
+                    levels_degrees = [ 30, 60, 90, 120, 150 ]
+                    levels = [ float(x) * pi / 180. for x in levels_degrees ]
                 else:
-                    levels = gen_contour_levels( vmin, vmax, min_contours = 3 )
-                _cs2 = ax.contour( thetagrid, logRgrid, zs, levels=levels, origin='lower', colors='white' )
+                    levels = gen_contour_levels( vmin, vmax, min_contours = 4 )
+                thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+                _cs2 = ax.contour( thetapts, logRpts, temparray, levels=levels, origin='lower', cmap = 'viridis' )
+                
             
             # Axis limits
             ax.set_xlim( self.thetas.min(), self.thetas.max() )
             if ylims is not None:
                 ax.set_ylim( *ylims )
             else:
-                ax.set_ylim( logRgoal[0], logRgoal[-1] )
+                ax.set_ylim( np.nanmin(logRpts), np.nanmax(logRpts) )
             
             # Axis labels; x-axis label depends on theta units
             if self.units in ['degrees','deg','d']:
@@ -8336,33 +8922,46 @@ class maser_v_theta(_maser_base_):
                 ax.set_xlabel(r'$\theta$ [radians]')
             ax.set_ylabel(r'log( $R/g\Omega$ )')
             
+            
             # Makes colorbar; will have ticks at overplotted contour lines, if contours requested
-            if contours:
+            if interp is not None:
+                
+                # Makes just the colorbar with correct ticks
                 if plotvalue == 'evpa':
-                    cbar = fig.colorbar( im, ax=ax, ticks = [ x*pi for x in [0.,0.25,0.5,0.75,1.0] ] )
-                    cbar.add_lines( _cs2 )
-                    tick_labels = ['0', r'$\pi$/4', r'$\pi$/2', r'3$\pi$/4', r'$\pi$']
+                    levels_degrees = [ 0, 30, 60, 90, 120, 150, 180 ]
+                    cbar = fig.colorbar( im, ax=ax, ticks = [ float(x)*pi/180. for x in levels_degrees ] )
+                    tick_labels = ['0', '', '', r'$\pi$/2', '', '', r'$\pi$']
                     cbar.ax.set_yticklabels( tick_labels )
-                else:
+                    if contours:
+                        cbar.add_lines( _cs2 )
+                    
+                elif contours:
                     cbar = fig.colorbar( im, ax=ax, ticks = levels )
                     cbar.add_lines( _cs2 )
-                    
-            else:
-                if plotvalue == 'evpa':
-                    cbar = fig.colorbar( im, ax=ax, ticks = [ x*pi for x in [0.,0.25,0.5,0.75,1.0] ] )
-                    tick_labels = ['0', r'$\pi$/4', r'$\pi$/2', r'3$\pi$/4', r'$\pi$']
-                    cbar.ax.set_yticklabels( tick_labels )
+                
                 else:
                     cbar = fig.colorbar( im, ax=ax )
             
+            # If no interpolation, can only make contour plot, so just labels contours on figure, no colorbar
+            else:
+                if plotvalue == 'evpa':
+                    mk_clabel = lambda crad : str( round( crad * 180. / pi ) )
+                    ax.clabel(_cs2, fontsize=9, inline=1, fmt=mk_clabel, colors='k' )
+                    cbar = None
+                else:
+                    ax.clabel(_cs2, fontsize=9, inline=1, fmt='%.1e', colors='k' )
+                    cbar = None
+            
             # Converts colorbar ticks to scientific notation if they're small; won't affect evpa plots
-            if vmax <= 1e-2:
+            if cbar is not None and vmax <= 1e-2:
                 cbar.ax.ticklabel_format( axis='y', style = 'sci', scilimits = (0,0) )
             
             # Determine plot title; depends on frequency with respect to line center
-            if freqoff == 0:
+            if isinstance(freqoff,int) and freqoff == 0:
                 freqtitle = 'Line Center'
-            else:
+            elif freqoff is None:
+                freqtitle = 'Peak'
+            elif isinstance(freqoff,int):
                 # Gets frequency offset in ANGULAR freq (s^-1)
                 dfreq = self.omegabar[ jcenter + freqoff ] - self.omegabar[jcenter]
             
@@ -8383,7 +8982,42 @@ class maser_v_theta(_maser_base_):
                 # If no frequency conversion requested, makes frequency label
                 else:
                     freqtitle = r'$\varpi =$ {0:.2e}'.format(dfreq) + r' s$^{-1}$ from Line Center'
+            else:
+                # Gets frequency offset in ANGULAR freq (s^-1)
+                dfreq = self.omegabar[ jcenter + np.max(freqoff) ] - self.omegabar[ jcenter + np.min(freqoff) ]
+                midfreq = ( self.omegabar[ jcenter + np.max(freqoff) + self.k ] + self.omegabar[ jcenter + np.min(freqoff) + self.k ] ) / 2.
             
+                 # If frequency conversion to MHz is requested, converts and generates freq_string label
+                if convert_freq:
+            
+                    # Converts from angular frequency to frequency & Creates label
+                    dfreq = dfreq / (2.*pi)
+                    midfreq = midfreq / (2.*pi)
+                    if abs(midfreq) < 1e-7:
+                        freqtitle = 'at Line Center'
+                    elif midfreq < 1000.0:
+                        freqtitle = '{0} Hz from Line Center'.format( round(midfreq,0) )
+                    elif midfreq >= 1e3 and midfreq < 1e6:
+                        freqtitle = '{0} kHz from Line Center'.format( round(midfreq*1e-3,0) )
+                    elif midfreq >= 1e6 and midfreq < 1e9:
+                        freqtitle = '{0} MHz from Line Center'.format( round(midfreq*1e-6,0) )
+                    elif midfreq >= 1e9:
+                        freqtitle = '{0} GHz from Line Center'.format( round(midfreq*1e-9,0) )
+                    
+                    if dfreq < 1000.0:
+                        freqtitle += ' ({0} Hz wide)'.format( round(dfreq,0) )
+                    elif dfreq >= 1e3 and dfreq < 1e6:
+                        freqtitle += ' ({0} kHz wide)'.format( round(dfreq*1e-3,0) )
+                    elif dfreq >= 1e6 and dfreq < 1e9:
+                        freqtitle += ' ({0} MHz wide)'.format( round(dfreq*1e-6,0) )
+                    elif dfreq >= 1e9:
+                        freqtitle += ' ({0} GHz wide)'.format( round(dfreq*1e-9,0) )
+        
+                # If no frequency conversion requested, makes frequency label
+                else:
+                    freqtitle = r'$\varpi =$ {0:.2e}'.format(midfreq) + r' s$^{-1}$ from Line Center (' + \
+                                '{0:.2e}'.format(dfreq) + r' s$^{-1}$ wide)'
+                
             # Combines and adds plot title
             if subtitle is None:
                 P.title( fig_title + r' at Cloud End, ' + freqtitle + '\n' )

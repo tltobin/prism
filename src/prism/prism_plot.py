@@ -1,3 +1,11 @@
+# Last updated 5/19/2021
+# - Made some text smaller
+# - plot_all_v_gkk:
+#    - Renamed labels option to curve_labels
+#    - Replaced figure title with in-figure labelling
+#    - Added ability to specify colors and markers per curve, instead of defaults
+#    - Added option to turn off gkk curve overplot
+
 
 
 
@@ -181,7 +189,7 @@ def plot_mcpeak( maserlist, labels, figname = None, show = True ):
     ax.set_ylabel(r'max $m_c$')
     
     # Make the legend
-    ax.legend(loc='upper center', ncol=3, fontsize='small' )
+    ax.legend(loc='upper center', ncol=3, fontsize='x-small' )
     
     
     
@@ -201,7 +209,8 @@ def plot_mcpeak( maserlist, labels, figname = None, show = True ):
         P.close()
 
 
-def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, figname = None, show = True  ):
+def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = None, label_loc = 'left', \
+    legend_loc = 3, legend_cols = 2, colors = None, markers = None, figname = None, show = True  ):
     """
     Plots m_l and EVPA, both vs. theta, in two windows at a single total optical depth (beta) for a selection
     of maser_v_theta class objects.
@@ -217,7 +226,7 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
                             (with method read_cloud_end_stokes) to the appropriate object attributes (eg. 
                             stacked_stoki, etc.).
                     
-        labels          List of Strings
+        curve_labels    List of Strings
                             Ahould be a list with the same length as mvtlist, containing the legend label 
                             for each maser_v_theta class object in mvtlist.
         
@@ -230,6 +239,19 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
         overplot_gkk    Boolean
                             [ Default = False ]
                             If True, will overplot the GKK functional form on the ml(theta) subplot.
+            
+            label           None or String
+                                [ Default = None ]
+                                Text to label inside plot.
+                        
+            label_loc       String: 'left', 'right', 'upperleft', 'upperright', 'lowerleft', or 'lowerright' 
+                                [ Default = 'left' ]
+                                The corner of the plot in which the label (if provided) will be placed. Here,
+                                'upper' and 'lower' refer to which subplot the label will be placed in, not the
+                                corner within the subplot. Note that 'left' and 'right' are shortened options for 
+                                'upperleft' and 'upperright'. Not case sensitive.
+                                Will probably want 'left' for lower optical depths and 'right' for higher optical
+                                depths.
                             
         legend_loc      Integer
                             [ Default = 3 ]
@@ -241,6 +263,18 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
         legend_cols     Integer
                             [ Default = 2 ]
                             Number of columns in the legend.
+        
+        colors          String, List of Strings, or None
+                            [ Default = None ]
+                            Color or list of colors used to plot each curve. If single string is provided,
+                            uses same color for each curve. If list of strings is provided, uses one
+                            color provided per curve. If None, uses default list.
+                            
+        markers         String, List of Strings, or None
+                            [ Default = None ]
+                            Marker or list of markers used to plot each curve. If single string is provided,
+                            uses same marker for each curve. If list of strings is provided, uses one
+                            marker provided per curve. If None, uses default list.
                             
         figname         None or String
                             [ Default = None ]
@@ -270,8 +304,8 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
     # If mvtlist / labels aren't a list (i.e. is single object), turns into a length-1 list
     if not isinstance( mvtlist, list ):
         mvtlist = [ mvtlist ]
-    if isinstance( labels, str ):
-        labels = [ labels ]
+    if isinstance( curve_labels, str ):
+        curve_labels = [ curve_labels ]
     
     # Makes template of error message for attribute checks
     attr_missing_msg = func_name + ': Object attribute {0} does not exist for object index {1} in mvtlist.'
@@ -320,14 +354,14 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
         
         
     
-    # Checks that labels, if provided, is a list with the same length as mvtlist
-    if not isinstance( labels, list ):
-        err_msg = "{0}: Keyword labels must be either a string or a list of strings.".format(func_name) 
+    # Checks that curve_labels, if provided, is a list with the same length as mvtlist
+    if not isinstance( curve_labels, list ):
+        err_msg = "{0}: Keyword curve_labels must be either a string or a list of strings.".format(func_name) 
         raise ValueError(err_msg)
-    elif len( labels ) != len( mvtlist ):
-        err_msg = "{0}: List provided for labels must be the same length as mvtlist.\n".format(func_name)  + \
+    elif len( curve_labels ) != len( mvtlist ):
+        err_msg = "{0}: List provided for curve_labels must be the same length as mvtlist.\n".format(func_name)  + \
                   " "*(12+len(func_name)+2) + \
-                  "( Current length of labels = {0}, Current length of mvtlist = {1} ).".format( len(labels), len(mvtlist) )
+                  "( Current length of curve_labels = {0}, Current length of mvtlist = {1} ).".format( len(curve_labels), len(mvtlist) )
         raise ValueError(err_msg)
     
         
@@ -355,20 +389,61 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
     
     
     #### Determine the colors and markers ####
-    if len(mvtlist) <= 7:
-        color_list  = color_sets[ 7][:len(mvtlist)]
-        marker_list = marker_sets[7][:len(mvtlist)]
-        fill_list = [ 'full', ] * len(mvtlist)
-    elif len(mvtlist) in [8,9]:
-        color_list  = color_sets[ len(mvtlist)]
-        marker_list = marker_sets[len(mvtlist)]
+    
+    # Processes markers and/or colors provided on call; they will be either a list or None
+    if isinstance( markers, str ):
+        markers = [ markers, ]*len(mvtlist)
+    elif not isinstance( markers, list ):
+        markers = None
+    if isinstance( colors, str ):
+        colors = [ colors, ]*len(mvtlist)
+    elif not isinstance( colors, list ):
+        colors = None
+        
+    # Determines color list to use of appropriate length
+    # If color list provided, uses only first N values if too long, or iterates if too short
+    if colors is not None:
+        if len(colors) >= len(mvtlist):
+            color_list  = colors[:len(mvtlist)]
+        else:
+            color_list = list( islice( cycle( colors ), len(mvtlist) ))
+    
+    # If colors are not provided, sets from defaults based on length
+    else:
+        if len(mvtlist) <= 7:
+            color_list  = color_sets[ 7][:len(mvtlist)]
+        elif len(mvtlist) in [8,9]:
+            color_list  = color_sets[ len(mvtlist) ]
+        else:
+            color_list  = list( islice( cycle( color_sets[ 8] ), len(mvtlist) ))
+    
+    # Determines marker list to use of appropriate length
+    # If provided, uses only first N values if too long, or iterates if too short
+    if markers is not None:
+        if len(markers) >= len(mvtlist):
+            marker_list  = markers[:len(mvtlist)]
+        else:
+            marker_list = list( islice( cycle( markers ), len(mvtlist) ))
+    
+    # If markers are not provided, sets from defaults based on length
+    else:
+        if len(mvtlist) <= 7:
+            marker_list  = marker_sets[ 7][:len(mvtlist)]
+        elif len(mvtlist) in [8,9]:
+            marker_list  = marker_sets[ len(mvtlist) ]
+        else:
+            marker_list  = list( islice( cycle( marker_sets[9] ), len(mvtlist) ))
+    
+    # Determines fill template
+    if len(mvtlist) <= 9:
         fill_list = [ 'full', ] * len(mvtlist)
     else:
-        color_list  = list( islice( cycle( color_sets[ 8] ), len(mvtlist) ))
-        marker_list = list( islice( cycle( marker_sets[9] ), len(mvtlist) ))
         fill_template = [ 'full', ]*8
         fill_template.extend( ['none',]*8 )
         fill_list   = list( islice( cycle( fill_template ), len(mvtlist) ))
+        
+        
+    
         
         
         
@@ -396,15 +471,16 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
         ax[0].plot( mobj.thetas, plot_ml  , marker = marker_list[i], \
                                             color = color_list[i], fillstyle = fill_list[i] )
         ax[1].plot( mobj.thetas, plot_evpa, marker = marker_list[i], \
-                                            color = color_list[i], fillstyle = fill_list[i], label=labels[i] )
+                                            color = color_list[i], fillstyle = fill_list[i], label=curve_labels[i] )
     
-    # Calculates and plots GKK curve
-    theta_min = np.min(np.array([  mobj.thetas.min() for mobj in mvtlist  ]))
-    theta_max = np.max(np.array([  mobj.thetas.max() for mobj in mvtlist  ]))
-    gkk_thetas = np.linspace( theta_min, theta_max, 1001 )
-    gkk_stokqi, gkk_evpa = gkk( gkk_thetas, units = units)
-    ax[0].plot( gkk_thetas, np.abs( gkk_stokqi ), 'k--')
-    ax[1].plot( gkk_thetas, gkk_evpa, 'k--', label='GKK' )
+    # Calculates and plots GKK curve, if requested
+    if overplot_gkk:
+        theta_min = np.min(np.array([  mobj.thetas.min() for mobj in mvtlist  ]))
+        theta_max = np.max(np.array([  mobj.thetas.max() for mobj in mvtlist  ]))
+        gkk_thetas = np.linspace( theta_min, theta_max, 1001 )
+        gkk_stokqi, gkk_evpa = gkk( gkk_thetas, units = units)
+        ax[0].plot( gkk_thetas, np.abs( gkk_stokqi ), 'k:')
+        ax[1].plot( gkk_thetas, gkk_evpa, 'k:', label='GKK' )
         
         
         
@@ -442,7 +518,19 @@ def plot_all_v_gkk( mvtlist, labels, beta, legend_loc = 3, legend_cols = 2, fign
     
     # Make the legend and plot title
     ax[1].legend(loc=legend_loc, fontsize='small', ncol=legend_cols)
-    ax[0].set_title(r'Linear Polarization at Line Center for $\tau = {0}$ vs. GKK'.format( beta ), size = 11)
+    # ax[0].set_title(r'Linear Polarization at Line Center for $\tau = {0}$ vs. GKK'.format( beta ), size = 11)
+    
+    # Sets plot label, if requested.
+    if label is not None:
+        if label_loc in ['left','upperleft']:
+            ax[0].text( 90.*0.02, ymax - (ymax -ymin )*0.05, label, ha='left', va='top', fontsize='large')
+        elif label_loc in ['right','upperright']:
+            ax[0].text( 90.*0.98, ymax - (ymax -ymin )*0.05, label, ha='right', va='top', fontsize='large')
+        elif label_loc == 'lowerleft':
+            ax[1].text( 90.*0.02, ymax1- (ymax1-ymin1)*0.05, label, ha='left', va='top', fontsize='large')
+        elif label_loc == 'lowerright':
+            ax[1].text( 90.*0.98, ymax1- (ymax1-ymin1)*0.05, label, ha='right', va='top', fontsize='large')
+    
     
     
     

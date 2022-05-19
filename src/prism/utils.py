@@ -1,11 +1,5 @@
-# Last updated 4/29/2021
-# - 
-# - New functions, round_up_to and round_down_to, which function like ceil and floor, but allow a non-integer precision
-#   to be specified. The precision functions the same as in Python's round function.
-# - New function, gen_contour_levels, will create minimal contour levels between some minimum and maximum value.
-# - New function, round_to_sig_fig, will round a float to a certain number of significant figures instead of decimal
-#   places. Includes option to specify whether value should be rounded only up or down.
-
+# Last updated 5/19/2021
+# - Debugging of contour generation by gen_contour_levels
 
 from glob import glob
 import numpy as np
@@ -153,7 +147,7 @@ def gen_contour_levels( value_min, value_max, min_contours = 2 ):
         
         # scale difference is just the scale of the max
         exscale_diff = exscale_max
-    
+        
     # If the max is zero but the min isn't
     else:
         
@@ -166,6 +160,7 @@ def gen_contour_levels( value_min, value_max, min_contours = 2 ):
         
     # The precision of the level steps is determined by the scale of the difference
     level_step = 10.**exscale_diff
+    #print('level_step: {0}'.format(level_step))
     
     # Contour levels will go from ceiling of min to floor of max
     if value_min != 0.0:
@@ -178,26 +173,66 @@ def gen_contour_levels( value_min, value_max, min_contours = 2 ):
         level_max = 0.0
     
     # Generates levels
-    levels = np.arange( level_min, level_max + level_step, level_step )
-    
-    # If there aren't the minimum number of contour levels, tries again with one lower precision
-    while levels.size < min_contours:
-        
-        # Adjusts the precision and step size
-        exscale_diff -= 1
-        level_step = 10.**exscale_diff
-    
-        # Contour levels will go from ceiling of min to floor of max
-        if value_min != 0.0:
-            level_min = round_up_to( value_min, -exscale_diff )
-        if value_max != 0.0:
-            level_max = round_down_to( value_max, -exscale_diff )
-    
-        # Generates levels
-        levels = np.arange( level_min, level_max + level_step, level_step )
+    levels = np.arange( level_min, value_max, level_step )
     
     # Converts levels to a list and makes sure levels rounded to desired precision
     levels = [ round( lev, -exscale_diff ) for lev in levels ]
+    
+    # If last contour not included and it should be, adds
+    if (len(levels) != 0 and level_max - levels[-1] == level_step):
+        levels.append( level_max )
+        
+    # print(levels)
+    # If there aren't the minimum number of contour levels, tries again with one lower precision
+    while len(levels) < min_contours:
+    
+        # Adjusts the precision and step size if range is not symmetric about zero
+        if min_contours < 2 * len(levels):
+            exscale_diff -= 1
+            level_step = 5.0 * 10.**exscale_diff
+        elif min_contours < 5 * len(levels):
+            exscale_diff -= 1
+            level_step = 2.0 * 10.**exscale_diff
+        else:
+            exscale_diff -= 1
+            level_step = 10.**exscale_diff
+                
+        # If not symmetric about zero, contour levels will go from ceiling of min to floor of max
+        if value_min != -value_max:
+            if value_min != 0.0:
+                level_min = round_up_to( value_min, -exscale_diff )
+            if value_max != 0.0:
+                level_max = round_down_to( value_max, -exscale_diff )
+    
+            # Generates levels
+            levels = np.arange( level_min, value_max, level_step )
+    
+            # Converts levels to a list and makes sure levels rounded to desired precision
+            levels = [ round( lev, -exscale_diff ) for lev in levels ]
+            if level_max - levels[-1] == level_step:
+                levels = np.append( levels, level_max )
+        
+        # If range is symmetric about zero, want to make sure levels include 0
+        else:
+            # Creates the positive levels starting at first postitive value first
+            pos_levs = np.arange( level_step, value_max, level_step )
+            
+            # Makes sure levels rounded to desired precision
+            pos_levs = np.array([ round( lev, -exscale_diff ) for lev in pos_levs ])
+            if level_max - pos_levs[-1] == level_step:
+                pos_levs = np.append( pos_levs, level_max )
+            
+            # Creates levels array from that
+            levels = -1.0 * np.array([ x for x in pos_levs[::-1] ])
+            levels = np.append( levels, 0.0 )
+            levels = np.hstack(( levels, pos_levs ))
+            
+            # Converts levels to a list
+            levels = list(levels)
+            
+            
+        #print('new level_step: {0}'.format( level_step ))
+        #print(levels)
     
     # Returns the generated levels
     return levels
