@@ -22,6 +22,7 @@
 
 
 
+
 import numpy as np
 from astropy.io import fits
 from scipy import optimize
@@ -2992,6 +2993,7 @@ class maser(_maser_base_):
             # Axis limits & log scale on y-axis
             ax.set_xlim( freqmin, freqmax )
             ax.set_ylim( self.taufs[0], plottaufmax )
+
             if tau_scale == 'log':
                 ax.set_yscale( 'log' )
             
@@ -3002,6 +3004,7 @@ class maser(_maser_base_):
             # Axis labels and title
             ax.set_xlabel(xlabel)
             ax.set_ylabel(r'Total $\tau_f$')
+
             if subtitle is None:
                 ax.set_title( fig_title )
             else:
@@ -5637,7 +5640,6 @@ class maser_v_theta(_maser_base_):
             outarray = R_tauf_theta
         else:
             outarray = RG_tauf_theta
-        
         
         
         #### Returns whichever array ####
@@ -9242,6 +9244,7 @@ class maser_v_theta(_maser_base_):
                 ax.set_ylabel(r'log( $R_0/g\Omega$ )')
             
             
+            
             # Makes colorbar; will have ticks at overplotted contour lines, if contours requested
             if interp is not None:
                 
@@ -9308,7 +9311,6 @@ class maser_v_theta(_maser_base_):
             
                  # If frequency conversion to MHz is requested, converts and generates freq_string label
                 if convert_freq:
-            
                     # Converts from angular frequency to frequency & Creates label
                     dfreq = dfreq / (2.*pi)
                     midfreq = midfreq / (2.*pi)
