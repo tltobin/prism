@@ -51,32 +51,32 @@ omegabar_max :  1851200.0
 d_omegabar :    740.48                                     # the Zeeman splitting, 1480.96/2.
 
 # 
-# Parameter: tau0
+# Parameter: fracLOS
 #       Alt: taures
 #    Status: Required - One of these must be specified in this file or when object is initialized.
 #   
-#       Parameter: tau0
+#       Parameter: fracLOS
 #           Data Type: List
 #           Units:     None
 #           Desc:      List establishing bin locations through the cloud. Values in list should indicate the 
 #                      fraction of the cloud through which the ray has passed, ranging from 0 to 1, inclusive. 
 #                      (If cloud=2, this indicates the fraction of the cloud through which Ray 1 has passed.)  
-#                      Will be multiplied by the total optical depth (beta) for the cloud for calculation.
+#                      Will be multiplied by the total optical depth (tauf) for the cloud for calculation.
 #           Notes:     Specified as a list in parameter file. Will be converted into a NumPy array with 
 #                      longdouble precision.
-#           Example:   tau0 : [ 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 ]
+#           Example:   fracLOS : [ 0.0, 0.2, 0.4, 0.6, 0.8, 1.0 ]
 #   
 #       Parameter: taures
 #           Date Type: Integer
 #           Units:     None
-#           Desc:      The number of bins along the line of sight through the cloud. If tau0 is not provided
-#                      explicitly, it will be generated as an array from 0 to 1, inclusive, with a number of
-#                      bins equal to that specified by taures.
+#           Desc:      The number of bins along the line of sight through the cloud. If fracLOS is not 
+#                      provided explicitly, it will be generated as an array from 0 to 1, inclusive, with a 
+#                      number of bins equal to that specified by taures.
 #
-#   Notes: taures is only used if tau0 is None.
+#   Notes: taures is only used if fracLOS is None.
 # 
 
-tau0 : None
+fracLOS : None
 taures : 101
 
 # 
@@ -154,7 +154,7 @@ n : 50
 #       Data Type: String
 #       Default:   ''
 #       Desc:      The directory path (from current directory) to which the output dimensionless inversions 
-#                  will be saved for each beta value.
+#                  will be saved for each tauf value.
 #       Example:   outpath : path/to/my/output
 #       Note:      Leaving the value to the right of the ':' blank will result in an empty string.
 
@@ -224,21 +224,21 @@ iquvF : None
 # HIGH PRIORITY PARAMETERS FOR STARTING OR RESUMING A SOLUTION -
 #   Important parameters for that must be set if starting a new solution or resuming a previous one.
 #
-# Parameter: betas
+# Parameter: taufs
 #       Data Type: Float or List
 #       Units:     None
 #       Default:   None
 #       Desc:      Value or a list of total optical depths for the cloud.
 #                  Must be set if either beginning a new calculation or iterating a previous solution for 
-#                  new values of beta.
+#                  new values of tauf.
 #                  Length should be N, where N is the total number of solutions that will be calculated. 
 #                  Values should be specified in increasing order, as the solution for each optical depth 
 #                  will be used as the initial guess for the next, and computation time increases with 
 #                  increasing optical depth. If no prior results are available, recommend starting with the
-#                  first value in this array < 1.0. Each value will be multiplied by array tau0 to set the 
+#                  first value in this array < 1.0. Each value will be multiplied by array fracLOS to set the 
 #                  optical depth transversed the cloud at each spatial resolution point.
 
-betas : [ 0.1, 0.3, 0.6, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4,
+taufs : [ 0.1, 0.3, 0.6, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 2.1, 2.2, 2.3, 2.4,
           2.5, 2.6, 2.7, 2.8, 2.9, 3.0, 4.5, 6.0, 8.0, 10., 13., 16., 20., 25., 30., 45., 60., 80.,
           100. ]
 
@@ -248,10 +248,10 @@ betas : [ 0.1, 0.3, 0.6, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0, 
 #       Default:   False
 #       Desc:      Whether the solving method, run, will begin with no prior information about the deltas 
 #                  array (resume=False) or if this is a continuation of a previous attempt at solving 
-#                  (resume=True). If the former, the initial guess for the first solution with betas[0] 
+#                  (resume=True). If the former, the initial guess for the first solution with taufs[0] 
 #                  will be an array of ones. If you wish to continue a previous solving run, set resume to 
 #                  be True and optional parameter lastdelta (see below) to be the last known array of deltas, 
-#                  which will be used as the inital guess for the new betas[0] solution. 
+#                  which will be used as the inital guess for the new taufs[0] solution. 
 #                  May also use trend fitting to extrapolate an initial guess for deltas using lastdelta and 
 #                  lastdelta2. (Not currently recommended.)
 
@@ -289,8 +289,8 @@ ftol : 6e-10
 #       Data Type: String
 #       Default:   'FaradayOut'
 #       Desc:      Beginning of the file name used to save the output inversion solutions. For each total 
-#                  optical depth, beta, the inversion solutions will be saved to a file named 
-#                  '[filename]_beta[beta]_dminus.[fits/txt]' in the directory specified by outpath.
+#                  optical depth, tauf, the inversion solutions will be saved to a file named 
+#                  '[filename]_tauf[tauf]_dminus.[fits/txt]' in the directory specified by outpath.
 
 filename : FaradayOut
 

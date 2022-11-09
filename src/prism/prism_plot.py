@@ -1,11 +1,5 @@
-# Last updated 5/19/2021
-# - Made some text smaller
-# - plot_all_v_gkk:
-#    - Renamed labels option to curve_labels
-#    - Replaced figure title with in-figure labelling
-#    - Added ability to specify colors and markers per curve, instead of defaults
-#    - Added option to turn off gkk curve overplot
-
+# Updated: 11/7/22  (v 1.0.0)
+# - Renamed all variables containing 'beta' to equivalent with 'tauf' for consistency with paper.
 
 
 # Basic imports
@@ -41,11 +35,11 @@ marker_sets = { 7: ['o','s','X','d','^','*','v'],
 
 def plot_mcpeak( maserlist, labels, figname = None, show = True ):
     """
-    Plots the *maximum* value of mc along frequency as a function of total optical depth (beta) for a set
+    Plots the *maximum* value of mc along frequency as a function of total optical depth (tauf) for a set
     of prism.maser objects (maserlist).
     
     Intended to be run *after* stokes at a given point in cloud have been calculated or read in for a range  
-    of beta values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
+    of tauf values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
     
     Required Parameters:
         
@@ -95,19 +89,19 @@ def plot_mcpeak( maserlist, labels, figname = None, show = True ):
     # Makes template of error message for attribute checks
     attr_missing_msg = func_name + ': Object attribute {0} does not exist for object index {1} in maserlist.'
     attr_shape_msg    = func_name + ': Shape of object attribute {0} for object index {1} in maserlist\n' + \
-                    ' '*(12+len(func_name)+2) + 'is not consistent with its attributes betas, omegabar, and k.\n' + \
+                    ' '*(12+len(func_name)+2) + 'is not consistent with its attributes taufs, omegabar, and k.\n' + \
                     ' '*(12+len(func_name)+2) + 'Attribute {0} should be NumPy array of shape ( {2}, {3} ).'
     
     # Iterates through maser objects in maserlist to check that they have the cloud_end_stokes attributes
     for i,mobj in enumerate(maserlist):
         
         # Iterates through required attributes without shape requirements to make sure the attributes exist
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in mobj.__dict__.keys():
                 raise AttributeError( attr_missing_msg.format(req_attr,i) )
         
-        # Sets aside the number of betas and frequencies expected for this object
-        Nbetas = mobj.betas.size
+        # Sets aside the number of taufs and frequencies expected for this object
+        Ntaufs = mobj.taufs.size
         Nfreq  = mobj.omegabar.size - 2 * mobj.k
         
         # Then checks that attributes with shape requirements exist and have the correct shape
@@ -118,8 +112,8 @@ def plot_mcpeak( maserlist, labels, figname = None, show = True ):
                 raise AttributeError( attr_missing_msg.format(req_att, i) )
         
             # If it does exist, makes sure that the array shape is correct
-            elif mobj.__dict__[req_att].shape != ( Nbetas, Nfreq ):
-                raise ValueError( attr_shape_msg.format(req_att, i, Nbetas, Nfreq) )
+            elif mobj.__dict__[req_att].shape != ( Ntaufs, Nfreq ):
+                raise ValueError( attr_shape_msg.format(req_att, i, Ntaufs, Nfreq) )
     
     # Checks that labels, if provided, is a list with the same length as maserlist
     if not isinstance( labels, list ):
@@ -162,14 +156,14 @@ def plot_mcpeak( maserlist, labels, figname = None, show = True ):
     # Begins iterating through the maser objects
     for i, mobj in enumerate(maserlist):
     
-        # Remove edges of array to avoid edge effects; stacked_mc has shape (betas, angfreq)
+        # Remove edges of array to avoid edge effects; stacked_mc has shape (taufs, angfreq)
         stacked_mc = mobj.stacked_mc[:, 2*mobj.k : - 2*mobj.k ]
         
-        # Finds max values for each beta along axis 1
+        # Finds max values for each tauf along axis 1
         mc_maxes = np.max( stacked_mc, axis=1 )
         
         # Plots curve
-        ax.plot( mobj.betas, mc_maxes, marker = marker_list[i], color = color_list[i], fillstyle = fill_list[i], \
+        ax.plot( mobj.taufs, mc_maxes, marker = marker_list[i], color = color_list[i], fillstyle = fill_list[i], \
                  label = labels[i] )
     
     
@@ -184,7 +178,7 @@ def plot_mcpeak( maserlist, labels, figname = None, show = True ):
     ax.set_ylim( ymin, ymax * 1.2 )
             
     # Axis labels
-    ax.set_xlabel(r'$\tau$')
+    ax.set_xlabel(r'$\tau_f$')
     ax.set_ylabel(r'max $m_c$')
     
     # Make the legend
@@ -208,14 +202,14 @@ def plot_mcpeak( maserlist, labels, figname = None, show = True ):
         P.close()
 
 
-def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = None, label_loc = 'left', \
+def plot_all_v_gkk( mvtlist, curve_labels, tauf, overplot_gkk = False, label = None, label_loc = 'left', \
     legend_loc = 3, legend_cols = 2, colors = None, markers = None, figname = None, show = True  ):
     """
-    Plots m_l and EVPA, both vs. theta, in two windows at a single total optical depth (beta) for a selection
+    Plots m_l and EVPA, both vs. theta, in two windows at a single total optical depth (tauf) for a selection
     of maser_v_theta class objects.
     
     Intended to be run *after* stokes at a given point in cloud have been calculated or read in for a range  
-    of beta values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
+    of tauf values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
     
     Required Parameters:
         
@@ -226,11 +220,11 @@ def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = N
                             stacked_stoki, etc.).
                     
         curve_labels    List of Strings
-                            Ahould be a list with the same length as mvtlist, containing the legend label 
+                            Should be a list with the same length as mvtlist, containing the legend label 
                             for each maser_v_theta class object in mvtlist.
         
-        beta            Float
-                            The value of total optical depth to be plotted. Should be in the betas attribute
+        tauf            Float
+                            The value of total optical depth to be plotted. Should be in the taufs attribute
                             for each maser_v_theta object in mvtlist.
             
     Optional Parameters:
@@ -309,19 +303,19 @@ def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = N
     # Makes template of error message for attribute checks
     attr_missing_msg = func_name + ': Object attribute {0} does not exist for object index {1} in mvtlist.'
     attr_shape_msg    = func_name + ': Shape of object attribute {0} for object index {1} in mvtlist\n' + \
-                    ' '*(12+len(func_name)+2) + 'is not consistent with its attributes betas, omegabar, and k.\n' + \
+                    ' '*(12+len(func_name)+2) + 'is not consistent with its attributes taufs, omegabar, and k.\n' + \
                     ' '*(12+len(func_name)+2) + 'Attribute {0} should be NumPy array of shape ( {2}, {3} ).'
     
     # Iterates through maser objects in mvtlist to check that they have the cloud_end_stokes attributes
     for i,mobj in enumerate(mvtlist):
         
         # Iterates through required attributes without shape requirements to make sure the attributes exist
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in mobj.__dict__.keys():
                 raise AttributeError( attr_missing_msg.format(req_attr,i) )
         
-        # Sets aside the number of betas and frequencies expected for this object
-        Nbetas = mobj.betas.size
+        # Sets aside the number of taufs and frequencies expected for this object
+        Ntaufs = mobj.taufs.size
         Nfreq  = mobj.omegabar.size - 2 * mobj.k
         
         # Then checks that attributes with shape requirements exist and have the correct shape
@@ -333,8 +327,8 @@ def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = N
                     raise AttributeError( attr_missing_msg.format(req_att, i) )
         
                 # If it does exist, makes sure that the array shape is correct
-                elif mobj.masers[theta].__dict__[req_att].shape != ( Nbetas, Nfreq ):
-                    raise ValueError( attr_shape_msg.format(req_att, i, Nbetas, Nfreq) )
+                elif mobj.masers[theta].__dict__[req_att].shape != ( Ntaufs, Nfreq ):
+                    raise ValueError( attr_shape_msg.format(req_att, i, Ntaufs, Nfreq) )
     
     # Makes sure that all maser_v_theta objects in mvtlist use the same units for thetas
     unitlist = np.unique(np.array([ mobj.units.lower() for mobj in mvtlist ]))
@@ -366,22 +360,22 @@ def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = N
         
         
         
-    #### Does some processing on requested beta value ####
+    #### Does some processing on requested tauf value ####
     
-    # Makes sure beta is a float
-    beta = float(beta)
+    # Makes sure tauf is a float
+    tauf = float(tauf)
         
-    # Determines indices for beta for each maser object in maserlist
-    beta_idxs = []
+    # Determines indices for tauf for each maser object in maserlist
+    tauf_idxs = []
     for i, mobj in enumerate(mvtlist):
-        if beta in mobj.betas:
-            beta_idxs.append( np.where( mobj.betas == beta )[0][0] )
+        if tauf in mobj.taufs:
+            tauf_idxs.append( np.where( mobj.taufs == tauf )[0][0] )
         else:
-            err_msg = '{0}: Requested beta value, {1}, not in betas object attribute of maser_v_theta object {2}.\n'.format(func_name, beta, i) + \
+            err_msg = '{0}: Requested tauf value, {1}, not in taufs object attribute of maser_v_theta object {2}.\n'.format(func_name, tauf, i) + \
                       ' '*(12+len(func_name)+2) + \
                       'Please make sure that cloud_end_stokes attributes have been generated or read for\n' + \
                       ' '*(12+len(func_name)+2) + \
-                      'the desired beta values before calling this method.'
+                      'the desired tauf values before calling this method.'
             raise ValueError(err_msg)
     
     
@@ -457,14 +451,14 @@ def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = N
     for i, mobj in enumerate(mvtlist):
             
         # Gets the index that corresponds to this total optical depth in the stacked arrays
-        beta_idx = beta_idxs[i]
+        tauf_idx = tauf_idxs[i]
         
         # Determines the index of the line center frequency
         jcenter = int((mobj.omegabar.size - 2*mobj.k) / 2)
         
         # Makes the lists of line center ml and evpa values to plot
-        plot_ml   = [ mobj.masers[theta].stacked_ml[   beta_idx , jcenter ] for theta in mobj.thetas ]
-        plot_evpa = [ mobj.masers[theta].stacked_evpa[ beta_idx , jcenter ] for theta in mobj.thetas ]
+        plot_ml   = [ mobj.masers[theta].stacked_ml[   tauf_idx , jcenter ] for theta in mobj.thetas ]
+        plot_evpa = [ mobj.masers[theta].stacked_evpa[ tauf_idx , jcenter ] for theta in mobj.thetas ]
         
         # Actually plots with corresponding color/marker/fill
         ax[0].plot( mobj.thetas, plot_ml  , marker = marker_list[i], \
@@ -517,7 +511,7 @@ def plot_all_v_gkk( mvtlist, curve_labels, beta, overplot_gkk = False, label = N
     
     # Make the legend and plot title
     ax[1].legend(loc=legend_loc, fontsize='small', ncol=legend_cols)
-    # ax[0].set_title(r'Linear Polarization at Line Center for $\tau = {0}$ vs. GKK'.format( beta ), size = 11)
+    # ax[0].set_title(r'Linear Polarization at Line Center for $\tau = {0}$ vs. GKK'.format( tauf ), size = 11)
     
     # Sets plot label, if requested.
     if label is not None:

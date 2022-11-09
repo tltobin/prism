@@ -1,14 +1,23 @@
-# Last updated 5/19/2021
-# - Fixed y-axis log scaling in methods with tau_scale='log' options.
-# - Fixed gOmega calculation to include conversion from angular frequency to frequency.
-# - Fixed error where EVPA were not being properly wrapped in maser_v_theta method plot_mlevpa.
-# - Updates to maser_v_theta.plot_theta_tau:
-#     - Added tau_scale='log' option and in-figure labelling
-#     - Added option to plot values at peak or bin multiple frequencies with freqoff keyword.
-#     - Added contours option
-#     - Added ploitvalues 'vmetric', 'quv', and 'mlmc'
-# - Added freqoff option to plot values at peak or multiple frequencies to maser_v_theta.plot_mlmc
-# - Updated some help text
+# Updates: 10/17/22 (v 1.0.0)
+# - Changed R calculation from integrating over ang freq with trap. rule to summing over n.
+# - Added option to get R at line center or sum over n, as desired.
+# - Fixed bug switching code and comments later in code
+# - Added 1/2pi factor into _maser_base_.calc_far_coeff calculation of far_coeff 
+#       ( previously offset by user-side parameter selection )
+#
+# Updates: 11/8/22 (v 1.0.0)
+# - Updated "Total $\tau$" labels in plotting functions to say $\tau_f$ instead of $\tau$ for
+#   consistency with variables used in paper.
+# - Renamed variable/attribute previously named 'tau0' -> 'fracLOS' for clarity. Updated here and in sample 
+#   parameter file, templates/sample.par.
+# - Renamed all variables containing 'beta' to equivalent with 'tauf' for consistency with paper. Updated here 
+#   and in sample parameter file, templates/sample.par.
+# - Since above edit changed naming convention of output deltas files, changed readin method in both maser and
+#   maser_v_theta classes to look first for files with the new 'tauf' naming convention and, if those are not
+#   found, look for files with the old 'beta' naming convention.
+# - For maser and maser_v_theta class methods, readin, changed default file extension from ext = 'txt' to 
+#   ext = 'fits'.
+
 
 
 
@@ -43,18 +52,18 @@ orig_print = np.get_printoptions()
 
 class _maser_base_:
     def __init__( self, parfile = None, ignore = [], \
-                    omegabar = _default_( None ), tau0 = _default_( None ), theta = _default_( None ), \
+                    omegabar = _default_( None ), fracLOS = _default_( None ), theta = _default_( None ), \
                     iquv0 = _default_( None ), W = _default_( None ), k = _default_( None ), \
                     phi = _default_( 0.0 ), n = _default_( 50 ), outpath = _default_( '' ), \
                     far_coeff = _default_( 0.0 ), etapm = _default_( 1.0 ), alphapm = _default_( 1.0 ), \
                     cloud = _default_( 1 ), iquvF = _default_( None ), \
-                    betas = _default_( None ), resume = _default_( False ), lastdelta = None, \
+                    taufs = _default_( None ), resume = _default_( False ), lastdelta = None, \
                     verbose = _default_( True ), ftol = _default_( 6e-10 ), filename = _default_( 'FaradayOut' ), \
                     endfill = _default_( 'zero' ), trend = _default_( False ), lastdelta2 = None):
         """
         Base class for handling parameters of maser and maser_v_theta. 
         
-        Does not have 'beta', 'tau', 'dtau' attributes or the associated method to set them, self.update_beta.
+        Does not have 'tauf', 'tau', 'dtau' attributes or the associated method to set them, self.update_tauf.
         """
         
         # Does not include required parameters, iquvF
@@ -107,19 +116,19 @@ class _maser_base_:
                                         '    through the combination of (omegabar_min, omegabar_max, d_omegabar).' )
         
         
-        ## Parameter tau0 -- NumPy array, required, can also be set by taures
-        if 'tau0' not in ignore:
-            self.tau0 = self._process_key_( 'tau0', tau0, self.conf[sect], \
+        ## Parameter fracLOS -- NumPy array, required, can also be set by taures
+        if 'fracLOS' not in ignore:
+            self.fracLOS = self._process_key_( 'fracLOS', fracLOS, self.conf[sect], \
                                 allowed = { np.ndarray: [np.longdouble, None] }, convert = False , ignore_none = True  )
             
-            # If tau0 is not set, checks for taures; int, conv allowed
-            if self.tau0 is None:
+            # If fracLOS is not set, checks for taures; int, conv allowed
+            if self.fracLOS is None:
                 taures = self._process_key_( 'taures', _default_(None), self.conf[sect], \
                                                        allowed = { int: None }, convert = True , ignore_none = True  )
                 if taures is not None:
-                    self.tau0 = np.linspace( 0, 1, taures, dtype = np.longdouble )
+                    self.fracLOS = np.linspace( 0, 1, taures, dtype = np.longdouble )
                 else:
-                    raise ValueError( 'Keyword tau0 must be provided either on call or in parameter file either directly or\n' + \
+                    raise ValueError( 'Keyword fracLOS must be provided either on call or in parameter file either directly or\n' + \
                                 '    through taures.' )
             
         
@@ -234,17 +243,17 @@ class _maser_base_:
                     self.iquvF = np.array( self.iquv0 )
         
         
-        ## Parameter betas -- list/array, float, or nonetype, conversion allowed, can be specified in parfile, 
+        ## Parameter taufs -- list/array, float, or nonetype, conversion allowed, can be specified in parfile, 
         #    none is valid 
-        #  print('Starting betas...')  # Line for debugging
-        if 'betas' not in ignore:
-            self.betas = self._process_key_( 'betas', betas, self.conf[sect], \
+        #  print('Starting taufs...')  # Line for debugging
+        if 'taufs' not in ignore:
+            self.taufs = self._process_key_( 'taufs', taufs, self.conf[sect], \
                          allowed = OrderedDict([ (np.ndarray, [float,None]), (float, None), (None, None) ]), \
                          convert = True , ignore_none = False )
             
-            # If betas is single value, converts it to a length-1 numpy array 
-            if isinstance( self.betas, float ):
-                self.betas = np.array([ self.betas ])
+            # If taufs is single value, converts it to a length-1 numpy array 
+            if isinstance( self.taufs, float ):
+                self.taufs = np.array([ self.taufs ])
             
         
         ## Parameter resume -- boolean, conversion not allowed, can be specified in parfile, none invalid
@@ -337,6 +346,8 @@ class _maser_base_:
         # Uses resulting values to calculate
         CONSTS = ( 8. * e_charge**3 * pi**.5 ) / ( 3. * E0 * me**2 * c**4 )
         PARS = ( ne * freq0 * Gam * w * B ) / ( A0 * P0 )
+        # 1/2pi factor
+        CONSTS = CONSTS / ( 2. * pi )
         self.far_coeff = CONSTS * PARS
         
         # Saves info for writing simulation description file
@@ -350,23 +361,28 @@ class _maser_base_:
     
     def _process_key_(self, keyname, keyvalue, confsection, allowed = {}, ignore_none = True, convert = False ):
         """
-        Utility function to process key values by priority: specified on call --> conf file (if provided) --> default.
+        Utility function to process key values by priority: specified on call --> conf file (if provided) --> 
+        default.
         
         Can filter for allowed data types and values using allowed dictionary (optional keyword).
         
         Required parameters:
             
             keyname         String
-                                The name of the parameter as it appears in the config file (if provided). Also used in
-                                error messages.
+            
+                                The name of the parameter as it appears in the config file (if provided). Also 
+                                used in error messages.
                                 
             keyvalue        (Any)
-                                Value of the parameter set on function call. Method will distinguish if it is the
-                                default parameter class or user-specified.
+            
+                                Value of the parameter set on function call. Method will distinguish if it is 
+                                the default parameter class or user-specified.
                                 
             confsection     ConfigParser SectionProxy object, or None
-                                To refer to a config file when the key is not specified directly on call, supply the
-                                section of the relevent config file, as read in by configparser, here, eg:
+            
+                                To refer to a config file when the key is not specified directly on call, 
+                                supply the section of the relevent config file, as read in by configparser, 
+                                here, eg:
                                 
                                     >>> conf = configparser.ConfigParser(inline_comment_prefixes=['#']) 
                                     >>> conf.read( 'my_config_file.par')
@@ -377,20 +393,25 @@ class _maser_base_:
         Optional parameters:
             
             allowed         Dict or OrderedDict
-                                [ Default = {} ]
-                                Used to check that values provided by user and read from the parameter file (if 
-                                applicable) are the appropriate data types/values for the parameter. Dictionary format
-                                should have the allowed data types as dictionary keys. If only specific values for a
-                                given data type are allowed, then the dictionary entry for that data type will point to
-                                a list or tuple of the allowed values associated with that data type. If any values of
-                                a given data type are allowed, the dictionary entry for that data type will be None.
+            
+                                [ Default = dict() ]
                                 
-                                For example, to check a keyword that can be either a boolean or a string named 'auto':
+                                Used to check that values provided by user and read from the parameter file 
+                                (if applicable) are the appropriate data types/values for the parameter. 
+                                
+                                Dictionary format should have the allowed data types as dictionary keys. If 
+                                only specific values for a given data type are allowed, then the dictionary 
+                                entry for that data type will point to a list or tuple of the allowed values 
+                                associated with that data type. If any values of a given data type are 
+                                allowed, the dictionary entry for that data type will be None.
+                                
+                                For example, to check a keyword that can be either a boolean or a string named 
+                                'auto':
                                 
                                     >>> allowed = { bool: None, str: [ 'auto' ] }
                                 
-                                If there is an order in which the data types should be checked, use an OrderedDict 
-                                instead of a Dict object for allowed:
+                                If there is an order in which the data types should be checked, use an 
+                                OrderedDict instead of a Dict object for allowed:
                                     
                                     >>> # If we need to check if a string is None, but it can also be a string
                                     >>> from collections import OrderedDict
@@ -398,49 +419,59 @@ class _maser_base_:
                                     >>> allowed[None] = None
                                     >>> allowed[str]  = None
                                 
-                                If the data type is a list or NumPy array, instead of specific values allowed for the
-                                keyword, the allowed dictionary should point to a length-2 list with the allowed 
-                                data types and length of the list. Either can be specified as None to remove 
-                                constraints. Multiple data types can be specified with nesting, which will be taken in 
-                                priority order:
+                                If the data type is a list or NumPy array, instead of specific values allowed 
+                                for the keyword, the allowed dictionary should point to a length-2 list with 
+                                the allowed data types and length of the list. Either can be specified as None 
+                                to remove constraints. Multiple data types can be specified with nesting, 
+                                which will be taken in priority order:
                                     
                                     >>> # To require the value to be a length-4 list of floats
                                     >>> allowed = { list: [ float, 4 ] }
                                     >>>
-                                    >>> # To require the value to be list of float or string of any length, with
-                                    >>> #    floats preferred over strings
+                                    >>> # To require the value to be list of float or string of any length, 
+                                    >>> #    with floats preferred over strings
                                     >>> allowed = { list: [ ( float, str ), None ] }
                                 
-                                Note: If data type is specified for a list/array, values will be converted, if possible.
+                                Note: If data type is specified for a list/array, values will be converted, if 
+                                possible.
                                 
-                                List and NumPy array are considered interchangable for checking data type, but whichever 
-                                is specified in the allowed dictionary is what the item will be returned as.
+                                List and NumPy array are considered interchangable for checking data type, but 
+                                whichever is specified in the allowed dictionary is what the item will be 
+                                returned as.
                                     
                                     >>> # The above examples will return a list object
                                     >>> # To repeat the len-4 list of floats returned as a numpy array
                                     >>> allowed = { np.ndarray: [ float, 4 ] }
                                     
-                                Note 1: If no data type is specified for a list/array type object and data is read in 
-                                        from the config file, the data type of the values in the list will be a string.
+                                Note 1: If no data type is specified for a list/array type object and data is 
+                                        read in from the config file, the data type of the values in the list 
+                                        will be a string.
+                                        
                                 Note 2: The data type of a numpy array is numpy.ndarray, NOT numpy.array.
             
             ignore_none     Boolean 
+            
                                 [ Default = True ]
-                                Whether to treat any parameters set as None in the config file as being unset (True) or
-                                treat None as a viable parameter for the key (False). Only used if a confsection is 
-                                provided.
+                                Whether to treat any parameters set as None in the config file as being unset 
+                                (True) or treat None as a viable parameter for the key (False). Only used if a 
+                                confsection is provided.
             
             convert         Boolean
+            
                                 [ Default = False ]
-                                Whether to try to convert any user-provided values into the data types, or simply check
-                                if they have the correct data type. This only applies to values provided on object call,
-                                not any read from the config file or built in defaults. Note: If convert is turned on,
-                                and multiple data types are acceptable, you MUST use an OrderedDict for your allowed
-                                values to ensure consistent type conversion.
+                                
+                                Whether to try to convert any user-provided values into the data types, or 
+                                simply check if they have the correct data type. This only applies to values 
+                                provided on object call, not any read from the config file or built in 
+                                defaults. Note: If convert is turned on, and multiple data types are 
+                                acceptable, you MUST use an OrderedDict for your allowed values to ensure 
+                                consistent type conversion.
             
         Returns:
             
-           out_value        The value of the key, as determined by prioritizing on call -> conf file -> default.
+           out_value        The value of the key, as determined by prioritizing on call -> conf file -> 
+           					default.
+           					
                             Will have one of the data types specified by the allowed dictionary. 
                                 
         """
@@ -736,11 +767,13 @@ class _maser_base_:
         Required Parameters:
             
             parfile         String
+            
                                 Path/name of the parameter file.
         
         Returned:
             
             conf            configparser.ConfigParser object
+            
                                 The configuration file in the form of a configparser.ConfigParser object.
         
         """
@@ -766,80 +799,110 @@ class _maser_base_:
 
 class maser(_maser_base_):
     def __init__(self, parfile = None, \
-                    omegabar = _default_( None ), tau0 = _default_( None ), theta = _default_( None ), \
+                    omegabar = _default_( None ), fracLOS = _default_( None ), theta = _default_( None ), \
                     iquv0 = _default_( None ), W = _default_( None ), k = _default_( None ), \
                     phi = _default_( 0.0 ), n = _default_( 50 ), outpath = _default_( '' ), \
                     far_coeff = _default_( 0.0 ), etapm = _default_( 1.0 ), alphapm = _default_( 1.0 ), \
                     cloud = _default_( 1 ), iquvF = _default_( None ), \
-                    betas = _default_( None ), resume = _default_( False ), lastdelta = None, \
+                    taufs = _default_( None ), resume = _default_( False ), lastdelta = None, \
                     verbose = _default_( True ), ftol = _default_( 6e-10 ), filename = _default_( 'FaradayOut' ), \
                     endfill = _default_( 'zero' ), trend = _default_( False ), lastdelta2 = None ):
         """
         Object for calculating the dimensionless population inversions for a given parameter set.
         
-        Initializing the object establishes object attributes described below. It does not calculate
-        the Faraday coefficient from provided terms (see calc_far_coeff method), find the best fit
-        population inversions (see run method), or read in output files from previous runs (see readin
-        method).
+        Initializing the object establishes object attributes described below. It does not calculate the 
+        Faraday coefficient from provided terms (see calc_far_coeff method), find the best fit population 
+        inversions (see run method), or read in output files from previous runs (see readin method).
         
         
         Optional Parameters:
             
             parfile         String
-                                If provided, gives the path and file name (from current directory) of
-                                a parameter file containing values for any of the keywords accepted 
-                                by this object class initialization. Values in this parameter file 
-                                will override any default values. 
-                                Parameter file ingestion also allows the specification of the
-                                omegabar array by min, max, and stepsize, as well as the
-                                specification of tau0 by number of resolution elements (both of which
-                                are not currently supported when set explicitly on object 
-                                initialization.)
+            
+                                If provided, gives the path and file name (from current directory) of a 
+                                parameter file containing values for any of the keywords accepted by this 
+                                object class initialization. Values in this parameter file will override any 
+                                default values. 
+                                
+                                Parameter file ingestion also allows the specification of the omegabar array 
+                                by min, max, and stepsize, as well as the specification of fracLOS by number 
+                                of resolution elements (both of which are not currently supported when set 
+                                explicitly on object initialization.)
             
             
                         --- Parameters that must be either provided or read from parameter file ---
                                             --- (see parfile parameter above) ---
             
             omegabar        NumPy Array
-                                Array of angular frequencies [s^-1] relative to line center for each 
-                                frequency bin. Should be 1D with length NV + 4k, where NV is the 
-                                number of angular frequency bins *not* removed by edge effects when
-                                calculating population inversions, delta. The 2k angular 
-                                frequency bins on either end of the frequency range will be lost
-                                during calculation, and will be accounted for by the edge handling
-                                method specified by optional keyword endfill. Saved as object 
-                                attribute, omegabar. NOTE: NumPy longdouble precision recommended.
-            tau0            NumPy Array
-                                Array establishing bin locations through the cloud. Values in array
-                                should indicate the fraction of the cloud through which the ray has
-                                passed, ranging from 0 to 1, inclusive. (If cloud=2, this indicates
-                                the fraction of the cloud through which Ray 1 has passed.) Will be 
-                                multiplied by the total optical depth (beta) for the cloud for
-                                calculation. Saved as object attribute, tau0. NOTE: NumPy longdouble 
-                                precision recommended.
+            
+                                Array of angular frequencies [s^-1] relative to line center for each angular 
+                                frequency bin. 
+                                
+                                Should be 1D with length NV + 4k, where NV is the number of angular frequency 
+                                bins *not* removed by edge effects when calculating population inversions, 
+                                delta. The 2k angular frequency bins on either end of the frequency range will 
+                                be lost during calculation, and will be accounted for by the edge handling
+                                method specified by optional keyword endfill. 
+                                
+                                Saved as object attribute, omegabar. 
+                                
+                                NOTE: NumPy longdouble precision recommended.
+                                
+            fracLOS         NumPy Array
+            
+                                Array establishing bin locations through the cloud (fracLOS = cloud fraction
+                                along Line Of Sight). Values in array should indicate the fraction of the 
+                                cloud through which the ray has passed, ranging from 0 to 1, inclusive. (If 
+                                cloud=2, this indicates the fraction of the cloud through which Ray 1 has 
+                                passed.) Will be multiplied by the total optical depth (tauf) for the cloud 
+                                for calculation. 
+                                
+                                Saved as object attribute, fracLOS. 
+                                
+                                NOTE: NumPy longdouble precision recommended.
+                                
             theta           Float
+            
                                 The angle between the magnetic field and the line of sight [radians].
-                                If cloud=2, this will be taken as the theta for Ray 1, where Ray 2 
-                                has theta_2 = - theta. Saved as object attribute, theta.
+                                
+                                If cloud=2, this will be taken as the theta for Ray 1, where Ray 2 has 
+                                theta_2 = - theta. 
+                                
+                                Saved as object attribute, theta.
+                                
             iquv0           Length-4 NumPy Array
-                                The initial values of (unitless) Stokes i, q, u, and v for the ray
-                                prior to passing through the cloud. If cloud=2, these values are
-                                used for Ray 1 only. Use optional parameter iquvF to set the 
-                                corresponding values for Ray 2 (see below). Saved as object attribute,
-                                iquv0.
+            
+                                The initial values of (unitless) Stokes i, q, u, and v for the ray prior to 
+                                passing through the cloud. If cloud=2, these values are used for Ray 1 only. 
+                                Use optional parameter iquvF to set the corresponding values for Ray 2 (see 
+                                below). 
+                                
+                                Saved as object attribute, iquv0.
+                                
             W               Float
-                                The Doppler Width in angular frequency [s^-1]. Saved as object 
-                                attribute, W. 
+            
+                                The Doppler Width in angular frequency [s^-1]. 
+                                
+                                Saved as object attribute, W. 
+                                
             k               Integer
-                                The number of angular frequency bins in omegabar spanned by the 
-                                Zeeman shift, delta omega. Saved as object attribute, k.
+            
+                                The number of angular frequency bins in omegabar spanned by the Zeeman shift, 
+                                delta omega. 
+                                
+                                Saved as object attribute, k.
              
                                --- Important parameters with useful defaults for all applications ---
                                         
             phi             Float   
+            
                                 [ Default = 0.0 ]
-                                The sky-plane angle [radians]. If cloud=2, this will be taken as the phi 
-                                for Ray 1, where Ray 2 has phi_2 = - phi. Saved as object attribute, phi.
+                                
+                                The sky-plane angle [radians]. If cloud=2, this will be taken as the phi for 
+                                Ray 1, where Ray 2 has phi_2 = - phi. 
+                                
+                                Saved as object attribute, phi.
+                            
             n               Integer
                                 [ Default = 50 ]
                                 The number of terms in the LDI expansion. Counting begins at 0. Saves as 
@@ -847,7 +910,7 @@ class maser(_maser_base_):
             outpath         String
                                 [ Default = '' ]
                                 The directory path (from current directory) to which the output 
-                                dimensionless inversions will be saved for each beta value. Saved as 
+                                dimensionless inversions will be saved for each tauf value. Saved as 
                                 object attribute, outpath.
             far_coeff       Float
                                 [ Default = 0.0 ]
@@ -890,7 +953,7 @@ class maser(_maser_base_):
                             
                                  --- Parameters Needed when Starting or Resuming a Solution ---
                                       
-            betas           Float or NumPy Array
+            taufs           Float or NumPy Array
                                 [ Default = None ]
                                 Value or an array of total optical depths for the cloud. Unitless.
                                 IF INITIALIZING A NEW CALCULATION, SET THIS TO NOT BE NONE. If
@@ -901,8 +964,8 @@ class maser(_maser_base_):
                                 for the next, and computation time increases with increasing optical
                                 depth. If no prior results are available, recommend starting with the
                                 first value in this array < 1.0. Each value will be multiplied by
-                                array tau0 to set the optical depth transversed the cloud at each 
-                                spatial resolution point. Saved as object attribute, betas.
+                                array fracLOS to set the optical depth transversed the cloud at each 
+                                spatial resolution point. Saved as object attribute, taufs.
                                 
                                       --- Parameters Needed when Resuming a Previous Solution ---
                                       
@@ -911,10 +974,10 @@ class maser(_maser_base_):
                                 Whether the solving method, run, will begin with no prior information 
                                 about the deltas array (resume=False) or if this is a continuation of a 
                                 previous attempt at solving (resume=True). If the former, the initial 
-                                guess for the first solution with betas[0] will be an array of ones. If 
+                                guess for the first solution with taufs[0] will be an array of ones. If 
                                 you wish to continue a previous solving run, set resume to be True and 
                                 optional parameter lastdelta (see below) to be the last known array of 
-                                deltas, which will be used as the inital guess for the new betas[0] 
+                                deltas, which will be used as the inital guess for the new taufs[0] 
                                 solution. May also use trend fitting to extrapolate an initial guess 
                                 for deltas using lastdelta and lastdelta2. Saved as object attribute, 
                                 resume.
@@ -924,7 +987,7 @@ class maser(_maser_base_):
                                 trend fitting) or the most recent delta solution (if there is trend 
                                 fitting). Only used if resume = True. Array shape should be (T,NV+4k,3), 
                                 where NV is the number of angular frequency bins *not* removed by edge 
-                                effects and T is the number of tau bins (i.e. the length of tau0). 
+                                effects and T is the number of tau bins (i.e. the length of fracLOS). 
                                 The three rows along the 2nd axis divide the population inversions by 
                                 transition, with lastdelta[:,:,0] = delta^-, lastdelta[:,:,1] = delta^0, 
                                 and lastdelta[:,:,2] = delta^+. Saved as object attribute, lastdelta.
@@ -945,9 +1008,13 @@ class maser(_maser_base_):
             filename        String
                                 [ Default = 'FaradayOut' ]
                                 Beginning of the file name used to save the output inversion solutions.
-                                For each total optical depth, beta, the inversion solutions will be
-                                saved to a file named '[filename]_beta[beta]_dminus.[fits/txt]' in the 
+                                For each total optical depth, tauf, the inversion solutions will be
+                                saved to a file named '[filename]_tauf[tauf]_dminus.[fits/txt]' in the 
                                 directory specified by outpath.
+                                Note: previous versions of this code called tauf 'beta'. To provide
+                                backwards compatibility, when reading files, this code will look first
+                                for files with the new 'tauf' naming convention, but will look for 
+                                any with the old 'beta' naming convention if those are not found.
             endfill         'fit' or 'zero'
                                 [ Default = 'zero' ]
                                 Determines how 2k angular frequency bins on either end will be filled 
@@ -975,7 +1042,7 @@ class maser(_maser_base_):
                                 The second most recent delta solution. See optional parameter trend above 
                                 for details on usage. If specified, array shape should be (T,NV+4k,3), 
                                 where NV is the number of angular frequency bins *not* removed by edge 
-                                effects and T is the number of tau bins (i.e. the length of tau0). The 
+                                effects and T is the number of tau bins (i.e. the length of fracLOS). The 
                                 three rows along the 2nd axis divide the population inversions by 
                                 transition, with lastdelta2[:,:,0] = delta^-,  lastdelta2[:,:,1] = delta^0, 
                                 and lastdelta2[:,:,2] = delta^+. Saved as object attribute, lastdelta2.
@@ -996,9 +1063,9 @@ class maser(_maser_base_):
             costwophi       Float
                                 cos(2*phi). Saved for easy use in calculations.
             tau             NumPy Array
-                                Array of tau0 * beta for a given total optical depth beta. During object
-                                initialization, initializes this attribute by assuming beta=1, so tau
-                                = tau0.
+                                Array of fracLOS * tauf for a given total optical depth tauf. During object
+                                initialization, initializes this attribute by assuming tauf=1, so tau
+                                = fracLOS.
             dtau            Float
                                 Bin width for tau attribute.
         
@@ -1007,29 +1074,29 @@ class maser(_maser_base_):
         
         
         #### Uses _maser_base_ initialization to load parfile (if any) and the following attributes:
-        ####     phi, n, outpath, far_coeff, etapm, alphapm, cloud, betas, resume, lastdelta, verbose, ftol, filename,
+        ####     phi, n, outpath, far_coeff, etapm, alphapm, cloud, taufs, resume, lastdelta, verbose, ftol, filename,
         ####     endfill, trend, lastdelta2
         ####     + fccalc, sintwophi, costwophi
         #### Saves config file as attribute conf, name of parfile as attribute parfile, and name of base section in
         ####     config file as attribute sect
         super().__init__( parfile = parfile, ignore = [], \
-                    omegabar = omegabar, tau0 = tau0, theta = theta, iquv0 = iquv0, W = W, k = k, \
+                    omegabar = omegabar, fracLOS = fracLOS, theta = theta, iquv0 = iquv0, W = W, k = k, \
                     phi = phi, n = n, outpath = outpath, \
                     far_coeff = far_coeff, etapm = etapm, alphapm = alphapm, \
                     cloud = cloud, iquvF = iquvF, \
-                    betas = betas, resume = resume, lastdelta = lastdelta, \
+                    taufs = taufs, resume = resume, lastdelta = lastdelta, \
                     verbose = verbose, ftol = ftol, filename = filename, \
                     endfill = endfill, trend = trend, lastdelta2 = lastdelta2)
         
-        #### Some extra work on betas attribute, setting beta, tau, and dtau
+        #### Some extra work on taufs attribute, setting tauf, tau, and dtau
         
-        # If betas is an array, sets beta, tau, and dtau attributes based on first value in array
-        if isinstance( self.betas, np.ndarray ):
-            self.update_beta( self.betas[0] )
+        # If taufs is an array, sets tauf, tau, and dtau attributes based on first value in array
+        if isinstance( self.taufs, np.ndarray ):
+            self.update_tauf( self.taufs[0] )
         
-        # If betas is None, sets beta, tau, and dtau attributes
-        elif self.betas is None:
-            self.beta = None
+        # If taufs is None, sets tauf, tau, and dtau attributes
+        elif self.taufs is None:
+            self.tauf = None
             self.tau  = None
             self.dtau = None
     
@@ -1079,15 +1146,15 @@ class maser(_maser_base_):
         # If checkfile should be written out, begins array of output gamma values to print
         check_out = np.array([])
         
-        # Begins iteration across beta values for solving
-        for b in range( self.betas.size ):
+        # Begins iteration across tauf values for solving
+        for b in range( self.taufs.size ):
             
             # If this is the first iteration, creates an initial guess array
             if b == 0:
                 
                 # If this is not resuming a previous run, that guess is an array of ones
                 if not self.resume:
-                    lastdelta = np.ones(( self.tau0.size, self.omegabar.size, 3 )).astype(np.longdouble)
+                    lastdelta = np.ones(( self.fracLOS.size, self.omegabar.size, 3 )).astype(np.longdouble)
                 
                 # Otherwise, sets that initial guess as the input resume array
                 else:
@@ -1095,13 +1162,13 @@ class maser(_maser_base_):
                     if self.trend == 'auto' or self.trend == True:
                         lastdelta2 = self.lastdelta2.astype(np.longdouble)
             
-            # Sets beta, tau, and dtau attributes for current beta value
-            self.update_beta(  self.betas[ b ] )
+            # Sets tauf, tau, and dtau attributes for current tauf value
+            self.update_tauf(  self.taufs[ b ] )
             
             
             # Prints feedback if requested
             if self.verbose  == True:
-                print('PRISM.MASER: Beginning iteration {0} with beta={1}...'.format(b, self.beta ))
+                print('PRISM.MASER: Beginning iteration {0} with tauf={1}...'.format(b, self.tauf ))
             
             # If the trend fitting is 'auto', calculates residual for both offsets if possible
             if self.trend == 'auto':
@@ -1132,7 +1199,7 @@ class maser(_maser_base_):
                     initdelta = trendlist[imin]
                     
                 
-                # If two betas haven't been iterated through yet, no trend to fit
+                # If two taufs haven't been iterated through yet, no trend to fit
                 else:
                     print('         Auto Trend Fitting: No trend to fit yet.')
                     initdelta = lastdelta
@@ -1162,18 +1229,18 @@ class maser(_maser_base_):
                 print(e)
                 
                 # Saves resulting deltas with write_deltas method and breaks
-                # self.write_deltas(self.beta, deltas_new, ext='fits', broken=True)
+                # self.write_deltas(self.tauf, deltas_new, ext='fits', broken=True)
                 break
 
             
             # Prints feedback if requested
             if self.verbose == True:
-                print('PRISM.MASER: Iteration {0} with beta={1} Complete.'.format(b, self.beta))
+                print('PRISM.MASER: Iteration {0} with tauf={1} Complete.'.format(b, self.tauf))
                 print('PRISM.MASER: Output data type', deltas_new.dtype)
                 print('PRISM.MASER: Writing output to file...')
             
             # Saves resulting deltas with write_deltas method
-            self.write_deltas(self.beta, deltas_new, ext='fits')
+            self.write_deltas(self.tauf, deltas_new, ext='fits')
             
             # New deltas become old for the next iteration
             if self.trend == True or self.trend == 'auto':
@@ -1183,18 +1250,18 @@ class maser(_maser_base_):
             self.deltas = lastdelta
             del deltas_new
             
-    def update_beta( self, beta ):
+    def update_tauf( self, tauf ):
         """
-        Updates beta value (i.e. the total optical depth of the cloud multiplied by tau0).
+        Updates tauf value (i.e. the total optical depth of the cloud multiplied by fracLOS).
         
-        Updates object attributes self.beta, self.tau, and self.dtau.
+        Updates object attributes self.tauf, self.tau, and self.dtau.
         """
         
-        # Saves new beta value as object attribute beta
-        self.beta = beta
+        # Saves new tauf value as object attribute tauf
+        self.tauf = tauf
         
         # Scales tau array appropriately
-        self.tau = self.tau0 * self.beta
+        self.tau = self.fracLOS * self.tauf
     
         # Determines the spacing in tau
         self.dtau = self.tau[1] - self.tau[0]
@@ -1202,15 +1269,20 @@ class maser(_maser_base_):
     
     ### Functions for analysis ###
             
-    def readin(self, beta, ext='txt', updatepars = False ): 
+    def readin(self, tauf, ext='fits', updatepars = False ): 
         """
         Program to read in files generated by iterative root finding in __init__ function.
         
-        Reads in the -, 0, and + delta arrays for the specified beta from the output directory.
+        Reads in the -, 0, and + delta arrays for the specified tauf from the output directory.
         
         Returns array with shape (T,NV+4k,3) array of delta values. Zeroth axis separates by optical
         depth, tau, first axis separates by frequency, and second axis separates by transition for
         -, 0, and +, resp.
+        
+        
+        Note: previous versions of this code called tauf 'beta'. To provide backwards compatibility, 
+        when reading files, this code will look first for files with the new 'tauf' naming convention, 
+        but will look for any with the old 'beta' naming convention if those are not found.
         """
         
         # Makes sure . not provided in requested extension
@@ -1221,24 +1293,41 @@ class maser(_maser_base_):
         if ext == 'txt':
         
             # Determines path names for each delta using desired extension
-            dminus_path = '{0}{1}_beta{2}_dminus.{3}'.format(self.outpath, self.filename, beta, ext )
-            dzero_path  = '{0}{1}_beta{2}_dzero.{3}'.format(self.outpath, self.filename, beta, ext )
-            dplus_path  = '{0}{1}_beta{2}_dplus.{3}'.format(self.outpath, self.filename, beta, ext )
+            dminus_path = '{0}{1}_tauf{2}_dminus.{3}'.format(self.outpath, self.filename, tauf, ext )
+            dzero_path  = '{0}{1}_tauf{2}_dzero.{3}'.format(self.outpath, self.filename, tauf, ext )
+            dplus_path  = '{0}{1}_tauf{2}_dplus.{3}'.format(self.outpath, self.filename, tauf, ext )
         
-            # Reads in minus file
-            dminus = np.genfromtxt( dminus_path )
-        
-            # Reads in zero file
-            dzero  = np.genfromtxt( dzero_path )
-        
-            # Reads in plus file 
-            dplus  = np.genfromtxt( dplus_path )
+            # Reads in minus file, if it exists with new tauf naming convention
+            if os.path.exists( dminus_path ):
+                dminus = np.genfromtxt( dminus_path )
+            else:
+                dminus_path = dminus_path.replace( 'tauf', 'beta' )
+                if os.path.exists( dminus_path ):
+                    dminus = np.genfromtxt( dminus_path )
+                
+            # Reads in zero file, if it exists with new tauf naming convention
+            if os.path.exists( dzero_path ):
+                dzero = np.genfromtxt( dzero_path )
+            else:
+                dzero_path = dzero_path.replace( 'tauf', 'beta' )
+                if os.path.exists( dzero_path ):
+                    dzero = np.genfromtxt( dzero_path )
+                
+            # Reads in plus file, if it exists with new tauf naming convention
+            if os.path.exists( dplus_path ):
+                dplus = np.genfromtxt( dplus_path )
+            else:
+                dplus_path = dplus_path.replace( 'tauf', 'beta' )
+                if os.path.exists( dplus_path ):
+                    dplus = np.genfromtxt( dplus_path )
         
         # Reading in if fits file
         elif ext == 'fits':
         
             # Determines path names for single fits file
-            outpath = '{0}{1}_beta{2}.{3}'.format(self.outpath, self.filename, beta, ext )
+            outpath = '{0}{1}_tauf{2}.{3}'.format(self.outpath, self.filename, tauf, ext )
+            if not os.path.exists( outpath ):
+                outpath = outpath.replace( 'tauf','beta' )
             
             # Opens fits file for reading
             hdu = fits.open( outpath )
@@ -1261,8 +1350,8 @@ class maser(_maser_base_):
                 Nplus = ( AFbins - 1 ) / 2
                 self.omegabar = np.linspace( -Nplus, Nplus, AFbins ).astype(np.longdouble) * dAF
                 
-                # Reconstructs tau0 assuming tau0 is fraction of cloud transversed from 0 to 1
-                self.tau0 = np.linspace( 0, 1, hdr['taubins'] ).astype(np.longdouble)
+                # Reconstructs fracLOS assuming fracLOS is fraction of cloud transversed from 0 to 1
+                self.fracLOS = np.linspace( 0, 1, hdr['taubins'] ).astype(np.longdouble)
                 
                 # Retrieves theta
                 self.theta = hdr['theta']
@@ -1293,7 +1382,7 @@ class maser(_maser_base_):
                 else:
                     self.iquvF = None
                 
-                # Saves beta and ftol
+                # Saves tauf and ftol
                 self.ftol = hdr['ftol']
                 
                 # Gets fcalc info if in the header
@@ -1316,8 +1405,8 @@ class maser(_maser_base_):
                 self.sintwophi = sin(2.*self.phi)
                 self.costwophi = cos(2.*self.phi)
         
-                # Updates beta
-                self.update_beta( float(beta) )
+                # Updates tauf
+                self.update_tauf( float(tauf) )
             
             # Closes fits file
             hdu.close()
@@ -1339,8 +1428,8 @@ class maser(_maser_base_):
             
             dtau            Float
                                 The bin width along optical depth. Depends on both resolution along
-                                line of sight and the total optical depth, beta. Updated by method 
-                                update_beta. Is *not* modified by updatepars option in readin method.
+                                line of sight and the total optical depth, tauf. Updated by method 
+                                update_tauf. Is *not* modified by updatepars option in readin method.
             
             far_coeff       Float
                                 Unitless value gives -gamma_QU / cos(theta). Can either be specified 
@@ -1351,7 +1440,7 @@ class maser(_maser_base_):
         
         Other object attributes used by this method that are set on object initialization:
         
-            theta, costheta, sintheta, phi, costwophi, sintwophi, etap, etam, tau0, cloud, iquv0, 
+            theta, costheta, sintheta, phi, costwophi, sintwophi, etap, etam, fracLOS, cloud, iquv0, 
             iquvF, k
             
         Optional Parameters:
@@ -1737,10 +1826,10 @@ class maser(_maser_base_):
         self.ml = np.sqrt( self.stokq**2 + self.stoku**2 ) / self.stoki
         self.evpa = 0.5 * np.arctan2( self.stoku, self.stokq )
         
-    def cloud_end_stokes(self, betas, ext='fits', tau_idx = -1, saveas = None, overwrite = False, verbose = True ):
+    def cloud_end_stokes(self, taufs, ext='fits', tau_idx = -1, saveas = None, overwrite = False, verbose = True ):
         """
         Calculates the dimensionless stokes values, fractional polarizations, and EVPA at the end of
-        the cloud for a variety of total optical depths, beta.
+        the cloud for a variety of total optical depths, tauf.
         
         Prior to calling, the following attributes should be set/up to date:
             
@@ -1753,13 +1842,13 @@ class maser(_maser_base_):
         
         Other object attributes used by this method that are set on object initialization:
         
-            theta, costheta, sintheta, phi, costwophi, sintwophi, etap, etam, tau0, cloud, iquv0, 
+            theta, costheta, sintheta, phi, costwophi, sintwophi, etap, etam, fracLOS, cloud, iquv0, 
             iquvF, k, filename, outpath
             
         Required Parameters:
             
-            betas           1D NumPy array
-                                The values of total optical depth, beta, for which the stokes
+            taufs           1D NumPy array
+                                The values of total optical depth, tauf, for which the stokes
                                 values are desired. Solution files should already exist for all
                                 specified values in the outpath, of file extension indicated by
                                 ext. (Of size B, for comparison with array attributes set below.)
@@ -1769,7 +1858,7 @@ class maser(_maser_base_):
             ext             String ('fits' or 'txt')
                                 [ Default = 'fits' ]
                                 The file extension of the output inversion solutions in the 
-                                outpath. All beta solutions should use the same file extension.
+                                outpath. All tauf solutions should use the same file extension.
             
             tau_idx         Integer
                                 [ Default = -1 ]
@@ -1786,10 +1875,10 @@ class maser(_maser_base_):
                                 If provided as string, will save the produced stokes and polarization
                                 arrays to files in the outpath, with the file name given in the string.
                                 Results will be saved as a fits file. String name given by saveas does
-                                not need to end in a '.fits' suffix.
+                                not need to end in a '.fits' suffix, though it can.
                                 The resulting fits file will have 8 extensions - the 0th extension
                                 contains a header with basic information on the results, the tau bin,
-                                and the values of beta, while the remaining 7 extensions contain the 
+                                and the values of tauf, while the remaining 7 extensions contain the 
                                 data arrays for stokes i, stokes q, stokes u, stokes v, mc, ml, and
                                 evpa, respectively.
             
@@ -1840,8 +1929,8 @@ class maser(_maser_base_):
                                 
         """
         
-        # Overrites betas object with provided attribute
-        self.betas = np.array( betas ).astype(float)
+        # Overrites taufs object with provided attribute
+        self.taufs = np.array( taufs ).astype(float)
         
         # Saves tau_idx as attribute
         self.tau_idx = tau_idx
@@ -1855,23 +1944,23 @@ class maser(_maser_base_):
         self.stacked_ml    = None
         self.stacked_evpa  = None
         
-        # Begins iterating through beta values
-        for i, beta in enumerate(betas):
+        # Begins iterating through tauf values
+        for i, tauf in enumerate(taufs):
             
             # Prints output if verbose
             if verbose:
-                print('  -- Loading beta = {0}...'.format(beta))
+                print('  -- Loading tauf = {0}...'.format(tauf))
             
             # Reads file to get deltas array
-            self.deltas = self.readin( str( round( beta, 1 )), ext=ext )
+            self.deltas = self.readin( str( round( tauf, 1 )), ext=ext )
             
-            # Updates dtau and other values associated with beta
-            self.update_beta( float(beta) )
+            # Updates dtau and other values associated with tauf
+            self.update_tauf( float(tauf) )
             
             # Calculates stokes, mc, ml, and evpa for the deltas solution
             self.stokes( verbose = False )
             
-            # Extracts desired row from stokes calculation for this beta and adds to stacked array
+            # Extracts desired row from stokes calculation for this tauf and adds to stacked array
             if i != 0:
                 self.stacked_stoki = np.vstack(( self.stacked_stoki, self.stoki[tau_idx,:] ))
                 self.stacked_stokq = np.vstack(( self.stacked_stokq, self.stokq[tau_idx,:] ))
@@ -1910,11 +1999,13 @@ class maser(_maser_base_):
             prime_hdu.header['AFbins'] = ( self.omegabar.size, 'Total Angular Freq Bins' )
             prime_hdu.header['AFdata'] = ( self.omegabar.size - 2*self.k, 'Angular Freq Bins for Stokes Data' )
             prime_hdu.header['k'] = ( self.k, 'Zeeman splitting [bins]' )
-            prime_hdu.header['taures'] = ( self.tau0.size, 'Number of Tau Resolution Bins along LoS' )
+            prime_hdu.header['taures'] = ( self.fracLOS.size, 'Number of Tau Resolution Bins along LoS' )
             prime_hdu.header['tauidx'] = ( tau_idx, 'Index along tau of Enclosed Stokes' )
-            prime_hdu.header['betaN'] = ( self.betas.size, 'Number of Optical Depths' )
-            prime_hdu.header['betamin'] = ( self.betas[0], 'Min of Optical Depths' )
-            prime_hdu.header['betamax'] = ( self.betas[-1], 'Max of Optical Depths' )
+            
+            # These header keys used to be 'betaN', 'betamin', and 'betamax', and may still be in old files
+            prime_hdu.header['taufN'] = ( self.taufs.size, 'Number of Optical Depths' )
+            prime_hdu.header['taufmin'] = ( self.taufs[0], 'Min of Optical Depths' )
+            prime_hdu.header['taufmax'] = ( self.taufs[-1], 'Max of Optical Depths' )
             
             
             # Populates primary header with other info about calculation
@@ -1948,8 +2039,8 @@ class maser(_maser_base_):
                 prime_hdu.header['A0'] = ( self.A0, 'Einstein A coeff [s^-1]' )
                 prime_hdu.header['P0'] = ( self.P0, 'Pi Pump rate [m^-3 s^-1]' )
             
-            # Saves array of betas values as data of primary hdu
-            prime_hdu.data = betas
+            # Saves array of taufs values as data of primary hdu
+            prime_hdu.data = taufs
                
             # Makes HDU for each stokes array
             ext1 = fits.ImageHDU( self.stacked_stoki.astype( np.double ) )
@@ -1997,7 +2088,7 @@ class maser(_maser_base_):
         Updates Attributes:
             
             tau_idx
-            betas
+            taufs
             stacked_stokesi
             stacked_stokesq
             stacked_stokesu
@@ -2054,14 +2145,19 @@ class maser(_maser_base_):
                     if hdu[0].header[key] != check_dict[key]:
                         print( warning_temp_line.format( key , hdu[0].header[key] - check_dict[key]) )
             
-                # Checks tau and beta values
-                check_dict = OrderedDict([ ( 'taures' , self.tau0.size ), \
-                                           ( 'betaN'  , self.betas.size ), \
-                                           ( 'betamin', self.betas[0] ), \
-                                           ( 'betamax', self.betas[-1] ) ])
+                # Checks tau and tauf values
+                #    tauf used to be called beta, so if tauf key is not in the hdu header, looks for the old
+                #    beta key
+                check_dict = OrderedDict([ ( 'taures' , self.fracLOS.size ), \
+                                           ( 'taufN'  , self.taufs.size ), \
+                                           ( 'taufmin', self.taufs[0] ), \
+                                           ( 'taufmax', self.taufs[-1] ) ])
                 for key in check_dict.keys():
-                    if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line.format( key , hdu[0].header[key] - check_dict[key]) )
+                    hdu_key = str(key)
+                    if hdu_key not in hdu[0].header.keys():
+                        hdu_key = hdu_key.replace( 'tauf', 'beta' )
+                    if hdu[0].header[hdu_key] != check_dict[key]:
+                        print( warning_temp_line.format( key , hdu[0].header[hdu_key] - check_dict[key]) )
             
                 # Checks other values present for all sims
                 check_dict = OrderedDict([ ( 'cloud'   , self.cloud ), \
@@ -2115,8 +2211,8 @@ class maser(_maser_base_):
             # Retrieving index of optical depth at which the stokes values are calculated
             tau_idx = hdu[0].header['tauidx']
             
-            # Saves array of betas values
-            self.betas = hdu[0].data
+            # Saves array of taufs values
+            self.taufs = hdu[0].data
             
             # Retrieves each stokes array and sets as corresponding attribute
             self.stacked_stoki = hdu[1].data
@@ -2130,7 +2226,7 @@ class maser(_maser_base_):
         # Saves tau_idx as object attribute
         self.tau_idx = tau_idx
             
-    def calc_R(self, Gamma = None, verbose = False, sep = False ):
+    def calc_R(self, summed = True, Gamma = None, verbose = False, sep = False ):
         """
         Program that calculates the stimulated emission rate, R, at the end of the cloud from the 
         input dimensionless inversion equations, delta.
@@ -2141,13 +2237,34 @@ class maser(_maser_base_):
         
         Optional Parameters:
             
-            Gamma           Float or None [ default = None ]
+            Gamma           Float or None 
+            					
+            					[ default = None ]
+            
                                 The loss rate in inverse seconds. If provided, will calculate and 
                                 return the stimulated emission rate, R. If set to None, will 
                                 calculate and return R/Gamma. 
+            
+            summed			Boolean True/False
+            					
+            					[ default = True ]
+            					
+            					Whether to calculate and return the sum of the stimulated emission 
+            					rate, R, over all n angular frequency bins (if True), or only 
+            					return/save the values of R calculated in the line center angular 
+            					frequency bin (if False).
+            					
+            					Note: the line center bin is determined as the bin at which the
+            					value of omegabar is closest to zero. If the omegabar array was
+            					selected in such a way that there is not a bin at omegabar = 0, this
+            					will not truly be the line center stimulated emission rate.
+                                
             verbose         Boolean True/False [ default = False ]
+            
                                 Whether to print out progress during calculation.
+                                
             sep             Boolean True/False [ default = False ]
+            
                                 If set to True, will return stimulated emission rate values for each
                                 transition separately, in the order minus, zero, plus. If set to
                                 False, will return only one value with the three stimulated emission
@@ -2169,13 +2286,19 @@ class maser(_maser_base_):
         Returns:
             
             outval          Float
+            
                                 Either the stimulated emission rate, in inverse seconds, at the cloud
                                 end if Gamma was provided, or the ratio of R/Gamma, if Gamma was not
-                                provided.        
+                                provided.
+                                
+                                If summed was set to True, this will be the value summed over all
+                                n angular frequency bins. If summed was set to False, the value 
+                                returned only reflects the value in the central angular frequency
+                                bin.
         """
         
-        # Figures out beta value from tau and tau0 attributes
-        beta = float(self.tau[-1]) / float(self.tau0[-1])
+        # Figures out tauf value from tau and fracLOS attributes
+        tauf = float(self.tau[-1]) / float(self.fracLOS[-1])
         
         # Simplifies name of attribute k
         k = self.k
@@ -2206,10 +2329,29 @@ class maser(_maser_base_):
             print(' Rzero_n shape : {0},   Rplus_n shape : {1},   R_minus_n shape : {2} '.format( Rzero_n.shape, \
                                                                                         Rplus_n.shape, Rminus_n.shape ))
         # Integrates each term along angular frequency bin using trap rule
-        domegabar = self.omegabar[1] - self.omegabar[0]
-        Rzero  = ( 0.5*Rzero_n[0]  + Rzero_n[1:-1].sum()  + 0.5*Rzero_n[-1]  ) * domegabar
-        Rplus  = ( 0.5*Rplus_n[0]  + Rplus_n[1:-1].sum()  + 0.5*Rplus_n[-1]  ) * domegabar
-        Rminus = ( 0.5*Rminus_n[0] + Rminus_n[1:-1].sum() + 0.5*Rminus_n[-1] ) * domegabar
+        # domegabar = self.omegabar[1] - self.omegabar[0]
+        # Rzero  = ( 0.5*Rzero_n[0]  + Rzero_n[1:-1].sum()  + 0.5*Rzero_n[-1]  ) * domegabar
+        # Rplus  = ( 0.5*Rplus_n[0]  + Rplus_n[1:-1].sum()  + 0.5*Rplus_n[-1]  ) * domegabar
+        # Rminus = ( 0.5*Rminus_n[0] + Rminus_n[1:-1].sum() + 0.5*Rminus_n[-1] ) * domegabar
+        
+        # Sums each term over all n wavelength bins; does assume that the values -> 0 in the bins at the end, if requested
+        if summed:
+	        Rzero  = Rzero_n.sum()
+	        Rplus  = Rplus_n.sum()
+        	Rminus = Rminus_n.sum()
+        
+        # If line center R is requested, just extracts values from line center bins
+        else:
+        	
+        	# omegabar array is 1D with shape ( NV+4k, ), while R####_n arrays calculated 
+        	#	above have shape ( NV, )
+        	# Finds the index where omegabar is closest to zero
+        	ncent = np.where( np.abs(self.omegabar) == np.nanmin(np.abs(self.omegabar)) )[0][0]
+        	
+        	# Pulls out values at line center, which are shifted in index by 2k bins
+        	Rzero  = Rzero_n[  ncent + 2*k ]
+        	Rplus  = Rplus_n[  ncent + 2*k ]
+        	Rminus = Rminus_n[ ncent + 2*k ]
         
         # If we're summing the three rates, sums
         if not sep:
@@ -2232,19 +2374,19 @@ class maser(_maser_base_):
         Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), or fracu (stoku/stoki).
         
         Note: Unlike plot_freq_tau method, which plots the values for multiple total optical depth solutions, this
-        plots a single solution / total optical depth beta along the line of sight.
+        plots a single solution / total optical depth tauf along the line of sight.
         
-        Intended to be run *after* the deltas solution for a given beta value has been read in (and set as the 
-        object's deltas attribute), the beta value and the associated attributes have been updated accordingly, and
+        Intended to be run *after* the deltas solution for a given tauf value has been read in (and set as the 
+        object's deltas attribute), the tauf value and the associated attributes have been updated accordingly, and
         the stokes parameters have been calculated. Eg:
         
             >>> my_maser = maser( parfile = myparfile, theta = 10.*pi/180., outpath = 'my_path', k = 1)
             >>>
-            >>> # Read in beta = 1.0 solution
+            >>> # Read in tauf = 1.0 solution
             ... my_maser.deltas = my_maser.readin( 1.0, ext='fits', updatepars = False ) 
             >>>
-            >>> # Update beta values
-            ... my_maser.update_beta( 1.0 )
+            >>> # Update tauf values
+            ... my_maser.update_tauf( 1.0 )
             >>>
             >>> # Calculate Stokes attributes
             ... my_maser.stokes()
@@ -2362,7 +2504,7 @@ class maser(_maser_base_):
             temparray = self.stoki
             
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes i with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'Stokes i with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'viridis'
         
         # Next, Stokes q
@@ -2372,7 +2514,7 @@ class maser(_maser_base_):
             temparray = self.stokq
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes q with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'Stokes q with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'RdBu'
         
         # Next, Stokes u
@@ -2382,7 +2524,7 @@ class maser(_maser_base_):
             temparray = self.stoku
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes u with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'Stokes u with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'RdBu'
         
         # Next, Stokes v
@@ -2392,7 +2534,7 @@ class maser(_maser_base_):
             temparray = self.stokv
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes v with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'Stokes v with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'RdBu'
         
         # Next, fractional stokes q
@@ -2402,7 +2544,7 @@ class maser(_maser_base_):
             temparray = self.stokq / self.stoki
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes q/i with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'Stokes q/i with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'RdBu'
         
         # Next, fractional stokes u
@@ -2412,7 +2554,7 @@ class maser(_maser_base_):
             temparray = self.stoku / self.stoki
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes u/i with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'Stokes u/i with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'RdBu'
         
         # Next, does ml
@@ -2422,7 +2564,7 @@ class maser(_maser_base_):
             temparray = self.ml
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'$m_l$ with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'$m_l$ with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'viridis'
         
         # Next, does mc
@@ -2432,7 +2574,7 @@ class maser(_maser_base_):
             temparray = self.mc
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'$m_c$ with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'$m_c$ with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'RdBu'
         
         # Finally, does evpa
@@ -2442,7 +2584,7 @@ class maser(_maser_base_):
             temparray = ( self.evpa + pi ) % pi
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'EVPA with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\beta=$'+str(round(self.beta,1))
+            fig_title = r'EVPA with $\theta=$'+str(round(theta_degrees,1))+r'$^{\circ}$ and $\tau_f=$'+str(round(self.tauf,1))
             cmap = 'RdBu'
          
             
@@ -2508,14 +2650,14 @@ class maser(_maser_base_):
             else:
                 P.close()
             
-    def plot_freq_tau(self, plotvalue, betamax = None, plotbetamax = 100.0, convert_freq = True, tau_scale = 'linear', \
+    def plot_freq_tau(self, plotvalue, taufmax = None, plottaufmax = 100.0, convert_freq = True, tau_scale = 'linear', \
                              interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
         """
         Plots desired value vs. frequency (x-axis) and total optical depth of the cloud (y-axis).
     
         Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), or fracu (stoku/stoki).
         
-        Intended to be run *after* stokes at a given point in cloud have been read in for a range of beta values
+        Intended to be run *after* stokes at a given point in cloud have been read in for a range of tauf values
         with cloud_end_stokes method.
         
         Required Parameters:
@@ -2526,16 +2668,16 @@ class maser(_maser_base_):
             
         Optional Parameters:
             
-            betamax         None or Float 
+            taufmax         None or Float 
                                 [ Default = None ]
-                                Maximum value of beta to show data for in the plot. If None, plots all available 
+                                Maximum value of tauf to show data for in the plot. If None, plots all available 
                                 data.
                                 
-            plotbetamax     Float or None
+            plottaufmax     Float or None
                                 [ Default = None ]
                                 Y-limit (optical depth) shown on the plot axes. If None, will be the same as
-                                betamax. (Only useful if you want to set the y-limit used by the figure to be
-                                the same as other figures despite not having beta up to that value for this
+                                taufmax. (Only useful if you want to set the y-limit used by the figure to be
+                                the same as other figures despite not having tauf up to that value for this
                                 parameter set.)
                         
             convert_freq    Boolean 
@@ -2604,28 +2746,28 @@ class maser(_maser_base_):
         
         
         
-        #### Processing defaults for betamax and plotbetamax ####
+        #### Processing defaults for taufmax and plottaufmax ####
         
-        # Finds index of maximum beta present for all ml arrays
-        if betamax is not None:
-            ibmax = np.where( self.betas == betamax )[0]
+        # Finds index of maximum tauf present for all ml arrays
+        if taufmax is not None:
+            ibmax = np.where( self.taufs == taufmax )[0]
             if ibmax.size > 0:
                 ibmax = ibmax[0]
             else:
-                raise ValueError("betamax value must be in betas array attribute.")
+                raise ValueError("taufmax value must be in taufs array attribute.")
         
-        # If using default betamax, just uses last one with stacked_stoki calculated
-        elif betamax is None:
+        # If using default taufmax, just uses last one with stacked_stoki calculated
+        elif taufmax is None:
             if 'stacked_stoki' in self.__dict__.keys():
                 ibmax = self.stacked_stoki.shape[0] - 1
-                betamax = self.betas[ibmax]
+                taufmax = self.taufs[ibmax]
             else:
                 raise AttributeError('Maser object has no attribute stacked_stoki. Please run cloud_end_stokes before\n'+\
                                      '    calling this method.')
         
-        # Sets plotbetamax, if not set
-        if plotbetamax is None:
-            plotbetamax = betamax
+        # Sets plottaufmax, if not set
+        if plottaufmax is None:
+            plottaufmax = taufmax
         
         
             
@@ -2761,7 +2903,7 @@ class maser(_maser_base_):
         
         
         
-        #### Regridding array for smooth distribution of beta solutions ####
+        #### Regridding array for smooth distribution of tauf solutions ####
         
         if temparray.size != 0:
             
@@ -2771,35 +2913,35 @@ class maser(_maser_base_):
             # Ravels temparray to prepare for regridding
             temparray = np.ravel( temparray )
         
-            # Creates grid of existing frequency/beta points
-            freqpts, betapts = np.meshgrid( self.omegabar[self.k : -self.k], self.betas[ :ibmax+1] )
+            # Creates grid of existing frequency/tauf points
+            freqpts, taufpts = np.meshgrid( self.omegabar[self.k : -self.k], self.taufs[ :ibmax+1] )
             freqpts = np.ravel( freqpts )
-            betapts = np.ravel( betapts )
-            points  = np.vstack(( freqpts, betapts )).T
+            taufpts = np.ravel( taufpts )
+            points  = np.vstack(( freqpts, taufpts )).T
             
             # Creates grid of desired total optical depths and regrids. 
             #   Assumed frequency is already equi-spaced so doesn't change.
             if tau_scale == 'log':
-                betagoal = np.logspace( log10(self.betas[0]), log10(betamax), 1001)
-                freqgrid, betagrid = np.meshgrid( self.omegabar[self.k : -self.k], betagoal )
+                taufgoal = np.logspace( log10(self.taufs[0]), log10(taufmax), 1001)
+                freqgrid, taufgrid = np.meshgrid( self.omegabar[self.k : -self.k], taufgoal )
             
-                # Converts betagoal to log space to figure out extent limits for imshow
-                dbetagoal = betagoal[1] - betagoal[0]
-                tau_ext_min = betagoal[0]  - dbetagoal/2.0
-                tau_ext_max = betagoal[-1] + dbetagoal/2.0
+                # Converts taufgoal to log space to figure out extent limits for imshow
+                dtaufgoal = taufgoal[1] - taufgoal[0]
+                tau_ext_min = taufgoal[0]  - dtaufgoal/2.0
+                tau_ext_max = taufgoal[-1] + dtaufgoal/2.0
             
-            # Does the same if linear beta is desired
+            # Does the same if linear tauf is desired
             else:
-                betagoal = np.linspace( self.betas[0], betamax, 1001)
-                freqgrid, betagrid = np.meshgrid( self.omegabar[self.k : -self.k], betagoal )
+                taufgoal = np.linspace( self.taufs[0], taufmax, 1001)
+                freqgrid, taufgrid = np.meshgrid( self.omegabar[self.k : -self.k], taufgoal )
             
-                dbetagoal = betagoal[1] - betagoal[0]
-                tau_ext_min = betagoal[0]  - dbetagoal/2.0
-                tau_ext_max = betagoal[-1] + dbetagoal/2.0
+                dtaufgoal = taufgoal[1] - taufgoal[0]
+                tau_ext_min = taufgoal[0]  - dtaufgoal/2.0
+                tau_ext_max = taufgoal[-1] + dtaufgoal/2.0
                 
             
             # Re-grids data array with desired interpolation
-            zs = griddata( points, temparray, (freqgrid, betagrid), method=interp)
+            zs = griddata( points, temparray, (freqgrid, taufgrid), method=interp)
             
             
             
@@ -2835,22 +2977,23 @@ class maser(_maser_base_):
             # Plots image
             if tau_scale == 'log':
                 # Get correct bin ends on y-scale
-                dy = log10(betagoal[1]/betagoal[0])
+                dy = log10(taufgoal[1]/taufgoal[0])
                 #print('dy = {0}'.format(dy))
                 freq_plot = np.linspace( freqmin, freqmax, (self.omegabar.size - 2*self.k ) + 1 )
-                beta_plot  = np.logspace( log10(self.betas[0]) - dy/2. , log10(betamax) + dy/2., betagoal.size+1 )
+                tauf_plot  = np.logspace( log10(self.taufs[0]) - dy/2. , log10(taufmax) + dy/2., taufgoal.size+1 )
                 #print('theta_plot from {0} to {1}'.format(theta_plot[0], theta_plot[-1]))
-                #print('beta_plot from {0} to {1}'.format(beta_plot[0], beta_plot[-1]))
-                im = ax.pcolormesh( freq_plot, beta_plot, zs, vmin = vmin, vmax = vmax, cmap = cmap )
+                #print('tauf_plot from {0} to {1}'.format(tauf_plot[0], tauf_plot[-1]))
+                im = ax.pcolormesh( freq_plot, tauf_plot, zs, vmin = vmin, vmax = vmax, cmap = cmap )
                 ax.set_yscale( 'log' )
             else:
-                dbeta  = betagoal[1]  - betagoal[0]
+                dtauf  = taufgoal[1]  - taufgoal[0]
                 im = ax.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
-                                extent = [ freqmin, freqmax, betagoal[0] - dbeta/2., betagoal[-1] + dbeta/2.] )
+                                extent = [ freqmin, freqmax, taufgoal[0] - dtauf/2., taufgoal[-1] + dtauf/2.] )
             
             # Axis limits & log scale on y-axis
             ax.set_xlim( freqmin, freqmax )
-            ax.set_ylim( self.betas[0], plotbetamax )
+            ax.set_ylim( self.taufs[0], plottaufmax )
+
             if tau_scale == 'log':
                 ax.set_yscale( 'log' )
             
@@ -2860,7 +3003,8 @@ class maser(_maser_base_):
             
             # Axis labels and title
             ax.set_xlabel(xlabel)
-            ax.set_ylabel(r'Total $\tau$')
+            ax.set_ylabel(r'Total $\tau_f$')
+
             if subtitle is None:
                 ax.set_title( fig_title )
             else:
@@ -2905,13 +3049,13 @@ class maser(_maser_base_):
         
             # Creates path for output for delta minus, 0, and plus
             if not broken:
-                outpath_minus = '{0}{1}_beta{2}_dminus.{3}'.format(self.outpath, self.filename, self.beta, ext )
-                outpath_zero  = '{0}{1}_beta{2}_dzero.{3}'.format(self.outpath, self.filename, self.beta, ext )
-                outpath_plus  = '{0}{1}_beta{2}_dplus.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath_minus = '{0}{1}_tauf{2}_dminus.{3}'.format(self.outpath, self.filename, self.tauf, ext )
+                outpath_zero  = '{0}{1}_tauf{2}_dzero.{3}'.format(self.outpath, self.filename, self.tauf, ext )
+                outpath_plus  = '{0}{1}_tauf{2}_dplus.{3}'.format(self.outpath, self.filename, self.tauf, ext )
             else:
-                outpath_minus = '{0}{1}_beta{2}_dminus_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
-                outpath_zero  = '{0}{1}_beta{2}_dzero_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
-                outpath_plus  = '{0}{1}_beta{2}_dplus_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath_minus = '{0}{1}_tauf{2}_dminus_BROKEN.{3}'.format(self.outpath, self.filename, self.tauf, ext )
+                outpath_zero  = '{0}{1}_tauf{2}_dzero_BROKEN.{3}'.format(self.outpath, self.filename, self.tauf, ext )
+                outpath_plus  = '{0}{1}_tauf{2}_dplus_BROKEN.{3}'.format(self.outpath, self.filename, self.tauf, ext )
             
             # Writes output to text file with numpy savetxt
             np.savetxt(outpath_minus,deltas[:,:,0],fmt='%.18f')
@@ -2931,9 +3075,9 @@ class maser(_maser_base_):
             
             # Creates single path for output for delta minus, 0, and plus
             if not broken:
-                outpath = '{0}{1}_beta{2}.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath = '{0}{1}_tauf{2}.{3}'.format(self.outpath, self.filename, self.tauf, ext )
             else:
-                outpath = '{0}{1}_beta{2}_BROKEN.{3}'.format(self.outpath, self.filename, self.beta, ext )
+                outpath = '{0}{1}_tauf{2}_BROKEN.{3}'.format(self.outpath, self.filename, self.tauf, ext )
             
             # Makes primary HDU with no data
             prime_hdu = fits.PrimaryHDU()
@@ -2945,8 +3089,8 @@ class maser(_maser_base_):
             prime_hdu.header['k'] = ( self.k, 'Zeeman splitting [bins]' )
             prime_hdu.header['AFres'] = ( self.omegabar[1]-self.omegabar[0], 'Angular Freq Resolution [s^-1]' )
             prime_hdu.header['AFbins'] = ( self.omegabar.size, 'Angular Freq Resolution Bins' )
-            prime_hdu.header['taubins'] = ( self.tau0.size, 'Number of Tau Resolution Bins' )
-            prime_hdu.header['tau'] = ( self.tau[-1] / self.tau0[-1], 'Total Optical Depth' )
+            prime_hdu.header['taubins'] = ( self.fracLOS.size, 'Number of Tau Resolution Bins' )
+            prime_hdu.header['tau'] = ( self.tau[-1] / self.fracLOS[-1], 'Total Optical Depth' )
             prime_hdu.header['theta'] = ( self.theta, 'B field angle [rad]' )
             prime_hdu.header['phi'] = ( self.phi, 'Sky angle [rad]' )
             prime_hdu.header['etap'] = ( self.etap, '|d^+|^2 / |d^0|^2' )
@@ -3022,11 +3166,11 @@ class maser(_maser_base_):
         desc.write(lin)
         
         # Line for number of tau resolution elements
-        lin = '  Tau resolution elements = {0}\n'.format( self.tau0.size )
+        lin = '  Tau resolution elements = {0}\n'.format( self.fracLOS.size )
         desc.write(lin)
         
-        # Line for maximum beta
-        lin = '  Beta = {0}\n'.format( self.betas )
+        # Line for maximum tauf
+        lin = '  tauf = {0}\n'.format( self.taufs )
         desc.write(lin)
         
         # Line for angles
@@ -3085,8 +3229,8 @@ class maser(_maser_base_):
             lin = 'Faraday Coeff = {0}\n\n'.format( self.far_coeff )
             desc.write(lin)
         
-        # Finally, prints full tau0 and omegabar arrays
-        lin = 'Full Tau0 Array (size={0}):\n  {1}\n\n'.format(self.tau0.size, self.tau0 )
+        # Finally, prints full fracLOS and omegabar arrays
+        lin = 'Full fracLOS Array (size={0}):\n  {1}\n\n'.format(self.fracLOS.size, self.fracLOS )
         desc.write(lin)
         lin = 'Full Omegabar array (size={0}):\n  {1}'.format( self.omegabar.size, self.omegabar )
         desc.write(lin)
@@ -3543,7 +3687,7 @@ class maser(_maser_base_):
         
             # This can't be done simultaneously across 2 dimensions (that I'm aware of) so this has to
             #     iterate over optical depth. 
-            for t in range( self.tau0.shape[0] ):
+            for t in range( self.fracLOS.shape[0] ):
         
                 # First generates the x-values for the polynomial fit
                 x = self.omegabar[2*k:-2*k]
@@ -3653,7 +3797,7 @@ class maser(_maser_base_):
         # Returns the residual
         return resid
     
-    def gain_matrix(self, delta, beta = None ):
+    def gain_matrix(self, delta, tauf = None ):
         """
         Program that calculates and returns the dimensionless gain matrix components.
        
@@ -3672,9 +3816,9 @@ class maser(_maser_base_):
 
         """
         
-        # If beta is provided along with delta array, sets
-        if beta is not None:
-            self.update_beta( beta )
+        # If tauf is provided along with delta array, sets
+        if tauf is not None:
+            self.update_tauf( tauf )
         
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
@@ -3750,7 +3894,7 @@ class maser(_maser_base_):
             # Returns array of gamma values
             return outstack1, outstack2
     
-    def integ_gain(self, delta, beta = None):
+    def integ_gain(self, delta, tauf = None):
         """
         Program that calculates and returns the integral of the dimensionless gain matrix 
         components, Gamma_Stokes.
@@ -3767,9 +3911,9 @@ class maser(_maser_base_):
        
 
         """
-        # If beta is provided along with delta array, sets
-        if beta is not None:
-            self.update_beta( beta )
+        # If tauf is provided along with delta array, sets
+        if tauf is not None:
+            self.update_tauf( tauf )
             
             
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
@@ -3938,7 +4082,7 @@ class maser(_maser_base_):
         else:
             return outstack1, outstack2
     
-    def stokes_per_ray(self, delta, beta = None, verbose=False ):
+    def stokes_per_ray(self, delta, tauf = None, verbose=False ):
         """
         Program that calculates the dimensionless stokes values from the input dimensionless 
         inversion equations, delta.
@@ -3950,7 +4094,7 @@ class maser(_maser_base_):
         The three rows along the 0th axis should be for delta^- (delta[0]), delta^0 (delta[1]), and 
         delta^+ (delta[2]).
         
-        beta is a float that is multiplied by self.tau0 to determine the tau values that are
+        tauf is a float that is multiplied by self.fracLOS to determine the tau values that are
         integrated over
         
         verbose [default=False]: Whether to print out the values in a specified wavelength bin at
@@ -3961,8 +4105,8 @@ class maser(_maser_base_):
         line of sight. self.phi is the sky-plane angle. Their corresponding values, self.costheta, 
         self.sintheta, self.costwophi and self.sinthophi are also used. self.etap and self.etam are 
         eta^+ and eta^-, respectively, or the squared ratio of the + and - dipole matrix components 
-        to that of the 0th. self.far_coeff is -gamma_QU / cos(theta). and self.tau0 is the array of 
-        tau0 values that are the multiplied by beta and integrated over.
+        to that of the 0th. self.far_coeff is -gamma_QU / cos(theta). and self.fracLOS is the array of 
+        fracLOS values that are the multiplied by tauf and integrated over.
        
         self.cloud option can be 1 or 2 depending on whether the seed radiation is entering one (1) 
         or both (2) ends of the cloud. 
@@ -3983,9 +4127,9 @@ class maser(_maser_base_):
         
         """
         
-        # If beta is provided along with delta array, sets
-        if beta is not None:
-            self.update_beta( beta )
+        # If tauf is provided along with delta array, sets
+        if tauf is not None:
+            self.update_tauf( tauf )
     
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
@@ -4282,7 +4426,7 @@ class maser(_maser_base_):
             # After calculation, unpacks stokes
             return stokes1, stokes2
     
-    def LDI_terms(self, delta, beta = None, verbose=False ):
+    def LDI_terms(self, delta, tauf = None, verbose=False ):
         """
         Program that calculates the dimensionless stokes values from the input dimensionless 
         inversion equations, delta.
@@ -4294,7 +4438,7 @@ class maser(_maser_base_):
         The three rows along the 0th axis should be for delta^- (delta[0]), delta^0 (delta[1]), and 
         delta^+ (delta[2]).
         
-        beta is a float that is multiplied by self.tau0 to determine the tau values that are
+        tauf is a float that is multiplied by self.fracLOS to determine the tau values that are
         integrated over
         
         verbose [default=False]: Whether to print out the values in a specified wavelength bin at
@@ -4305,8 +4449,8 @@ class maser(_maser_base_):
         line of sight. self.phi is the sky-plane angle. Their corresponding values, self.costheta, 
         self.sintheta, self.costwophi and self.sinthophi are also used. self.etap and self.etam are 
         eta^+ and eta^-, respectively, or the squared ratio of the + and - dipole matrix components 
-        to that of the 0th. self.far_coeff is -gamma_QU / cos(theta). and self.tau0 is the array of 
-        tau0 values that are the multiplied by beta and integrated over.
+        to that of the 0th. self.far_coeff is -gamma_QU / cos(theta). and self.fracLOS is the array of 
+        fracLOS values that are the multiplied by tauf and integrated over.
        
         self.cloud option can be 1 or 2 depending on whether the seed radiation is entering one (1) 
         or both (2) ends of the cloud. 
@@ -4327,9 +4471,9 @@ class maser(_maser_base_):
         
         """
         
-        # If beta is provided along with delta array, sets
-        if beta is not None:
-            self.update_beta( beta )
+        # If tauf is provided along with delta array, sets
+        if tauf is not None:
+            self.update_tauf( tauf )
     
         # First separates out the plus, 0, and minus components of delta. These arrays have shape 
         #    (T, NV+4k)
@@ -4660,7 +4804,7 @@ class maser_v_theta(_maser_base_):
                                 
                                 Parameter file ingestion also allows the specification of the
                                 omegabar array by min, max, and stepsize, as well as the
-                                specification of tau0 by number of resolution elements (both of which
+                                specification of fracLOS by number of resolution elements (both of which
                                 are not currently supported when set explicitly on object 
                                 initialization.)
             
@@ -4736,7 +4880,7 @@ class maser_v_theta(_maser_base_):
         
         
         #### Uses _maser_base_ initialization to load parfile (if any) and the following attributes:
-        ####     phi, n, outpath, far_coeff, etapm, alphapm, cloud, betas, resume, lastdelta, verbose, ftol, filename,
+        ####     phi, n, outpath, far_coeff, etapm, alphapm, cloud, taufs, resume, lastdelta, verbose, ftol, filename,
         ####     endfill, trend, lastdelta2
         ####     + fccalc, sintwophi, costwophi
         #### Saves config file as attribute conf, name of parfile as attribute parfile, and name of base section in
@@ -4813,15 +4957,15 @@ class maser_v_theta(_maser_base_):
             self.masers[ theta ] = maser( parfile = parfile, theta = thetas_radians[i], outpath = self.outpaths[i], **kwargs )
         
         
-        #### Some extra work on betas attribute, setting beta, tau, and dtau
+        #### Some extra work on taufs attribute, setting tauf, tau, and dtau
         
-        # If betas is an array, sets beta, tau, and dtau attributes based on first value in array
-        if isinstance( self.betas, np.ndarray ):
-            self.update_beta( self.betas[0] )
+        # If taufs is an array, sets tauf, tau, and dtau attributes based on first value in array
+        if isinstance( self.taufs, np.ndarray ):
+            self.update_tauf( self.taufs[0] )
         
-        # If betas is None, sets beta, tau, and dtau attributes
-        elif self.betas is None:
-            self.update_beta( None )
+        # If taufs is None, sets tauf, tau, and dtau attributes
+        elif self.taufs is None:
+            self.update_tauf( None )
         
     def calc_far_coeff(self, ne, freq0, Gam, B, A0, P0, mode='cm' ):
         """
@@ -4847,51 +4991,55 @@ class maser_v_theta(_maser_base_):
             for key in ['far_coeff','fccalc','ne','P0','freq0','Gamma','B','A0']:
                 self.masers[ theta ].__dict__[key] = self.__dict__[key]
     
-    def update_beta( self, beta ):
+    def update_tauf( self, tauf ):
         """
-        Updates beta value (i.e. the total optical depth of the cloud multiplied by tau0).
+        Updates tauf value (i.e. the total optical depth of the cloud multiplied by fracLOS).
         
-        Updates object attributes self.beta, self.tau, and self.dtau.
+        Updates object attributes self.tauf, self.tau, and self.dtau.
         """
         
-        if beta is not None:
+        if tauf is not None:
         
-            # Saves new beta value as object attribute beta
-            self.beta = beta
+            # Saves new tauf value as object attribute tauf
+            self.tauf = tauf
         
             # Scales tau array appropriately
-            self.tau = self.tau0 * self.beta
+            self.tau = self.fracLOS * self.tauf
     
             # Determines the spacing in tau
             self.dtau = self.tau[1] - self.tau[0]
         
         else:
-            self.beta = None
+            self.tauf = None
             self.tau  = None
             self.dtau = None
         
         # Sets for all lower level maser objects
         for theta in self.thetas:
-            for key in ['beta','tau','dtau']:
+            for key in ['tauf','tau','dtau']:
                 self.masers[ theta ].__dict__[key] = self.__dict__[key]
     
     
     ### Functions for analysis ###
             
-    def readin(self, beta, as_attr, ext='txt', updatepars = False ): 
+    def readin(self, tauf, as_attr, ext='fits', updatepars = False ): 
         """
         Program to read in files generated by iterative root finding for each maser object in the masers 
         dictionary attribute and saves them as an object attribute of the individual maser objects of 
         name as_attr. 
         
-        For example, to load the beta = 2.0 delta arrays (saved as fits files) as the lastdelta
+        For example, to load the tauf = 2.0 delta arrays (saved as fits files) as the lastdelta
         attributes for each object, run
             
             self.readin( 2.0, 'lastdelta', ext='fits', updatepars = False )
         
+        Note: previous versions of this code called tauf 'beta'. To provide backwards compatibility, 
+        when reading files, this code will look first for files with the new 'tauf' naming convention, 
+        but will look for any with the old 'beta' naming convention if those are not found.
+        
         Required Parameters:
             
-            beta            Float
+            tauf            Float
                                 
                                 Value or an array of total optical depths for the cloud. Unitless.
                                 Indicates which solution should be read in from the output path.
@@ -4905,7 +5053,7 @@ class maser_v_theta(_maser_base_):
             
             ext             String ('txt' or 'fits')
                                 
-                                [ Default = 'txt' ]
+                                [ Default = 'fits' ]
                                 
                                 The extension of the file to be read in.
                                 
@@ -4933,10 +5081,19 @@ class maser_v_theta(_maser_base_):
             if ext == 'txt':
         
                 # Determines path names for each delta using desired extension
-                dminus_path = '{0}{1}_beta{2}_dminus.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, beta, ext )
-                dzero_path  = '{0}{1}_beta{2}_dzero.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, beta, ext )
-                dplus_path  = '{0}{1}_beta{2}_dplus.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, beta, ext )
-        
+                dminus_path = '{0}{1}_tauf{2}_dminus.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, tauf, ext )
+                dzero_path  = '{0}{1}_tauf{2}_dzero.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, tauf, ext )
+                dplus_path  = '{0}{1}_tauf{2}_dplus.{3}'.format(self.masers[theta].outpath, self.masers[theta].filename, tauf, ext )
+                
+                # If files don't exist with new tauf naming convention, uses old beta naming convention
+                if not os.path.exists( dminus_path ):
+                    dminus_path = dminus_path.replace( 'tauf', 'beta' )
+                if not os.path.exists( dzero_path ):
+                    dzero_path = dzero_path.replace( 'tauf', 'beta' )
+                if not os.path.exists( dplus_path ):
+                    dplus_path = dplus_path.replace( 'tauf', 'beta' )
+                    
+                
                 # Reads in files
                 dminus = np.genfromtxt( dminus_path )
                 dzero  = np.genfromtxt( dzero_path )
@@ -4947,7 +5104,9 @@ class maser_v_theta(_maser_base_):
             elif ext == 'fits':
         
                 # Determines path names for single fits file
-                outpath = '{0}{1}_beta{2}.{3}'.format(self.masers[theta].outpath, self.filename, beta, ext )
+                outpath = '{0}{1}_tauf{2}.{3}'.format(self.masers[theta].outpath, self.filename, tauf, ext )
+                if not os.path.exists( outpath ):
+                    outpath = outpath.replace( 'tauf', 'beta' )
             
                 # Opens fits file for reading
                 hdu = fits.open( outpath )
@@ -4970,8 +5129,8 @@ class maser_v_theta(_maser_base_):
                     Nplus = ( AFbins - 1 ) / 2
                     self.masers[theta].omegabar = np.linspace( -Nplus, Nplus, AFbins ).astype(np.longdouble) * dAF
                 
-                    # Reconstructs tau0 assuming tau0 is fraction of cloud transversed from 0 to 1
-                    self.masers[theta].tau0 = np.linspace( 0, 1, hdr['taubins'] ).astype(np.longdouble)
+                    # Reconstructs fracLOS assuming fracLOS is fraction of cloud transversed from 0 to 1
+                    self.masers[theta].fracLOS = np.linspace( 0, 1, hdr['taubins'] ).astype(np.longdouble)
                 
                     # Retrieves theta
                     self.masers[theta].theta = hdr['theta']
@@ -5002,7 +5161,7 @@ class maser_v_theta(_maser_base_):
                     else:
                         self.masers[theta].iquvF = None
                 
-                    # Saves beta and ftol
+                    # Saves tauf and ftol
                     self.masers[theta].ftol = hdr['ftol']
                 
                     # Gets fcalc info if in the header
@@ -5029,16 +5188,16 @@ class maser_v_theta(_maser_base_):
                 hdu.close()
             
             
-            # Updates beta
-            self.update_beta( float(beta) )
+            # Updates tauf
+            self.update_tauf( float(tauf) )
         
             # Sets as requested attribute
             self.masers[theta].__dict__[as_attr] = np.dstack(( dminus, dzero, dplus ))
         
-    def cloud_end_stokes( self, betas, ext='fits', tau_idx = -1, saveas = None, overwrite = False, verbose = True ):
+    def cloud_end_stokes( self, taufs, ext='fits', tau_idx = -1, saveas = None, overwrite = False, verbose = True ):
         """
         Calculates the dimensionless stokes values, fractional polarizations, and EVPA at the end of
-        the cloud for a variety of total optical depths, beta, for every maser object in the masers
+        the cloud for a variety of total optical depths, tauf, for every maser object in the masers
         attribute dictionary.
         
         Prior to calling, the following attributes of the maser objects in maser should be set/up to 
@@ -5053,13 +5212,13 @@ class maser_v_theta(_maser_base_):
         
         Other maser attributes used by this method that are set on object initialization:
         
-            theta, costheta, sintheta, phi, costwophi, sintwophi, etap, etam, tau0, cloud, iquv0, 
+            theta, costheta, sintheta, phi, costwophi, sintwophi, etap, etam, fracLOS, cloud, iquv0, 
             iquvF, k, filename, outpath
             
         Required Parameters:
             
-            betas           1D NumPy array
-                                The values of total optical depth, beta, for which the stokes
+            taufs           1D NumPy array
+                                The values of total optical depth, tauf, for which the stokes
                                 values are desired. Solution files should already exist for all
                                 specified values in the outpath, of file extension indicated by
                                 ext. (Of size B, for comparison with array attributes set below.)
@@ -5069,7 +5228,7 @@ class maser_v_theta(_maser_base_):
             ext             String ('fits' or 'txt')
                                 [ Default = 'fits' ]
                                 The file extension of the output inversion solutions in the 
-                                outpath. All beta solutions should use the same file extension.
+                                outpath. All tauf solutions should use the same file extension.
             
             tau_idx         Integer
                                 [ Default = -1 ]
@@ -5089,7 +5248,7 @@ class maser_v_theta(_maser_base_):
                                 not need to end in a '.fits' suffix.
                                 The resulting fits file will have 8 extensions - the 0th extension
                                 contains a header with basic information on the results, the tau bin,
-                                and the values of beta, while the remaining 7 extensions contain the 
+                                and the values of tauf, while the remaining 7 extensions contain the 
                                 data arrays for stokes i, stokes q, stokes u, stokes v, mc, ml, and
                                 evpa, respectively.  
             
@@ -5140,10 +5299,10 @@ class maser_v_theta(_maser_base_):
                                 
         """
         
-        # Overrites betas object with provided attribute for top-level object and maser objects
-        self.betas = np.array( betas ).astype(float)
+        # Overrites taufs object with provided attribute for top-level object and maser objects
+        self.taufs = np.array( taufs ).astype(float)
         for theta in self.thetas:
-            self.masers[ theta ].betas = self.betas.copy()
+            self.masers[ theta ].taufs = self.taufs.copy()
         
         # Saves high level tau_idx (individual maser objects will be updated by their cloud_end_stokes method)
         self.tau_idx = tau_idx
@@ -5154,7 +5313,7 @@ class maser_v_theta(_maser_base_):
                 print('Loading results for theta = {0} {1}...'.format(theta, self.units))
         
             # Just hands the info to the prism maser object's cloud_end_stokes method
-            self.masers[theta].cloud_end_stokes( betas, ext = ext, tau_idx = tau_idx, saveas = saveas, \
+            self.masers[theta].cloud_end_stokes( taufs, ext = ext, tau_idx = tau_idx, saveas = saveas, \
                                                  overwrite = overwrite, verbose = verbose )
     
     def read_cloud_end_stokes( self, filename, verbose = True ):
@@ -5179,7 +5338,7 @@ class maser_v_theta(_maser_base_):
         
         Updates Attributes:
             
-            betas
+            taufs
             stacked_stokesi
             stacked_stokesq
             stacked_stokesu
@@ -5216,49 +5375,91 @@ class maser_v_theta(_maser_base_):
                 print('                                          Value for theta = {0} {1} : {2}    Value for theta = {3} {1} : {4}'.format(\
                                                                         theta, self.units, self.masers[theta].tau_idx, self.thetas[0], self.tau_idx ))
     
-    def calc_R( self, betas = None, ext = 'fits', saveas = None, overwrite = False, verbose = False ):
+    def calc_R( self, Gamma = None, summed = True, taufs = None, \
+    				  ext = 'fits', saveas = None, overwrite = False, verbose = False ):
         """
-        Calculates the stimulated emission rate, R, at the end of the cloud for each maser object in 
-        the masers dictionary attribute for one or more given total optical depths. Includes loading 
-        in the deltas object from the output file for that total optical depth for each maser object.
+        Calculates the stimulated emission rate with respect to the loss rate, R/Gamma, at the end of 
+        the cloud for each maser object in the masers dictionary attribute for one or more given total 
+        optical depths. Includes loading in the deltas object from the output file for that total 
+        optical depth for each maser object.
         
-        The stimulated emission rate, R, in inverse seconds, is either returned as a numpy array with
-        shape (theta, beta)
+        If Gamma is specified, will return the stimulated emission rate, R, in inverse seconds, at
+        cloud end is returned as an array with shape ( N_theta, N_tauf ).
+        
+        If Gamma is not specified, returned array (same shape) will instead by the unitless ratio 
+        of stimulated emission rate to loss rate, R/Gamma.
         
         Optional Parameters:
             
-            betas           Float, List/Array of Floats, or None
+            Gamma           Float or None
+            
                                 [ default = None ]
-                                The value(s) of beta for which R will be calculated. If None are
-                                provided, will calculate for all beta values in object attribute,
-                                betas.set to None, will 
+                                
+                                The loss rate in inverse seconds. If provided, will calculate and 
+                                return the stimulated emission rate, R. If set to None, will 
                                 calculate and return R/Gamma. 
+                                
+                                Note: either way, any saved fits file contains the values of 
+                                R/Gamma. Gamma value is only used to scale values returned.
+                                
+            summed			Boolean True/False
+            					
+            					[ default = True ]
+            					
+            					Whether to calculate R or R/Gamma summed over all n angular 
+            					frequency bins (if True), or only return/save the values calculated 
+            					in the line center angular frequency bin (if False).
+            					
+            					Note: the line center bin is determined as the bin at which the
+            					value of omegabar is closest to zero. If the omegabar array was
+            					selected in such a way that there is not a bin at omegabar = 0, this
+            					will not truly be the line center stimulated emission rate.
+            
+            taufs           Float, List/Array of Floats, or None
+            
+                                [ default = None ]
+                                
+                                The value(s) of tauf for which R will be calculated. If None are
+                                provided, will calculate for all tauf values in object attribute,
+                                taufs.
             
             ext             String ('fits' or 'txt')
+            
                                 [ Default = 'fits' ]
+                                
                                 The file extension of the output inversion (deltas) solutions in 
                                 the outpath. All maser objects should use the same file extension.
             
             saveas          String or None
+            
                                 [ Default = None ]
+                                
                                 If provided as string, will save the calculated stimulated emission
                                 rate, R, to a fits file in the top-level object attribute, outpath,
                                 with the file name given in the string. String name given by saveas 
-                                does not need to end in a '.fits' suffix.
+                                does not need to end in a '.fits' suffix, though it can.
+                                
                                 The resulting fits file will have 2 extensions - the 0th extension
                                 contains a header with basic information on the results, the tau bin,
-                                and the values of beta (as the data stored in the extension), while 
-                                the 1st extension contains the data array of calculated R values
-                                in inverse seconds.
+                                and the values of tauf (as the data stored in the extension), while 
+                                the 1st extension contains the data array of calculated R/Gamma 
+                                values (unitless). Any provided value of Gamma will be stored in the
+                                0th extension header. A key 'SUMMED' will also be saved in the 0th 
+                                extension header indicating whether the results contained were summed
+                                over all angular frequency bins or calculated at line center.
             
             overwrite       Boolean
+            
                                 [ Default = False ]
+                                
                                 Whether to overwrite any existing fits file with the same name when 
                                 creating the output (True) or not (False). Used only if saveas is not
                                 None.
                                 
             verbose         Boolean
+            
                                 [ default = False ]
+                                
                                 Whether to print out progress during calculation.
         
         Other Object Attributes Used:
@@ -5276,68 +5477,79 @@ class maser_v_theta(_maser_base_):
             
         Returns:
             
-            R_beta_theta    NumPy Array
-                                The stimulated emission rate, in inverse seconds, at the cloud end.
-                                2-dimensional array with shape ( number_of_theta, number_of_beta).
+            outarray        NumPy Array
+            
+                                2-dimensional array with shape ( number_of_theta, number_of_tauf).
+                                
+                                If Gamma was specified, values contained are stimulated emission
+                                rate, R, in inverse seconds, for each (theta,tauf) combination.
+                                
+                                If Gamma was not specified, values contained are unitless values
+                                of R / Gamma.
+                                
+                                If summed=True, the values have been summed over all angular
+                                frequency bins. If summed=False, the values are only those in the
+                                angular frequency bin that is closest to line center.
         """
         
-        #### Processing beta to make sure it's a numpy array ####
+        #### Processing tauf to make sure it's a numpy array ####
         
         # If it's not provided, uses object attribute as default
-        if betas is None:
-            betas = self.betas
+        if taufs is None:
+            taufs = self.taufs
         
         # If it's a list or tuple, turns into a numpy array
-        elif isinstance(betas,list) or isinstance(betas,tuple):
-            betas = np.array( betas )
+        elif isinstance(taufs,list) or isinstance(taufs,tuple):
+            taufs = np.array( taufs )
         
         # Otherwise, assumes it's a single value and tries to turn into a length-1 numpy array
-        elif not isinstance( betas, np.ndarray ):
-            betas = np.array([ betas ])
+        elif not isinstance( taufs, np.ndarray ):
+            taufs = np.array([ taufs ])
         
         
         
         
         
         
-        #### Iterates through betas and theta values to calculate R ####
+        #### Iterates through taufs and theta values to calculate R/Gamma ####
         
-        # Initializes empty 2D array to populate with calculated R values
-        R_beta_theta = np.array([])
+        # Initializes empty 2D array to populate with calculated R/Gamma values
+        RG_tauf_theta = np.array([])
         
         # Iterates through theta/maser object attributes
         for theta in self.thetas:
             
-            # Initializes empty 1D numpy array to populate with R at a given theta as a function of beta
-            R_v_beta = np.array([])
+            # Initializes empty 1D numpy array to populate with R/Gamma at a given theta as a function of tauf
+            RG_v_tauf = np.array([])
             if verbose:
-                print('Loading delta and calculating R for theta = {0} {1}...'.format(theta, self.units))
+                print('Loading delta and calculating R/Gamma for theta = {0} {1}...'.format(theta, self.units))
             
-            # Iterates through beta values and populates R_v_beta array
-            for beta in betas:
+            # Iterates through tauf values and populates RG_v_tauf array
+            for tauf in taufs:
                 if verbose:
-                    print( '  -- Beta = {0}'.format(beta) )
+                    print( '  -- tauf = {0}'.format(tauf) )
                 
-                # Reads in deltas array for beta value and sets as object's deltas attribute
-                self.masers[theta].deltas = self.masers[theta].readin( beta, ext=ext, updatepars=False )
+                # Reads in deltas array for tauf value and sets as object's deltas attribute
+                self.masers[theta].deltas = self.masers[theta].readin( tauf, ext=ext, updatepars=False )
             
-                # Makes sure that the beta object attributes are up to date
-                self.masers[theta].update_beta( float(beta) )
+                # Makes sure that the tauf object attributes are up to date
+                self.masers[theta].update_tauf( float(tauf) )
             
-                # Calculates the stimulated emission rate and adds to R_v_beta array
+                # Calculates the stimulated emission rate and adds to RG_v_tauf array
                 #     Does not implement Gamma yet.
-                R_v_beta = np.append( R_v_beta, self.masers[theta].calc_R( Gamma = None, verbose = False, sep = False ) )
+                RG_v_tauf = np.append( RG_v_tauf, \
+                					   self.masers[theta].calc_R( Gamma = None, summed = summed, verbose = False, sep = False ) )
             
-            # Once R for all beta values for that theta have been calculated...
+            # Once R/Gamma for all tauf values for that theta have been calculated...
             # Clears out deltas attribute from maser object to conserve memory
             del self.masers[theta].deltas
             
-            # Reshapes and adds R_v_beta to R_beta_theta array
-            R_v_beta = R_v_beta.reshape( R_v_beta.size, 1)
-            if R_beta_theta.size > 0:
-                R_beta_theta = np.hstack(( R_beta_theta, R_v_beta ))
+            # Reshapes and adds RG_v_tauf to RG_tauf_theta array
+            RG_v_tauf = RG_v_tauf.reshape( RG_v_tauf.size, 1)
+            if RG_tauf_theta.size > 0:
+                RG_tauf_theta = np.hstack(( RG_tauf_theta, RG_v_tauf ))
             else:
-                R_beta_theta = np.array( R_v_beta )
+                RG_tauf_theta = np.array( RG_v_tauf )
             
         
         
@@ -5359,16 +5571,17 @@ class maser_v_theta(_maser_base_):
             prime_hdu = fits.PrimaryHDU()
             
             # Populates primary header with info these stokes arrays
+            prime_hdu.header['SUMMED'] = ( summed, 'Calculation summed over ang freq bins?' )
             prime_hdu.header['AFmin'] = ( self.omegabar[0+self.k], 'Angular Freq Min for Stokes Arrays [s^-1]' )
             prime_hdu.header['AFmax'] = ( self.omegabar[-1-self.k], 'Angular Freq Max for Stokes Arrays [s^-1]' )
             prime_hdu.header['AFres'] = ( self.omegabar[1]-self.omegabar[0], 'Angular Freq Resolution [s^-1]' )
             prime_hdu.header['AFbins'] = ( self.omegabar.size, 'Total Angular Freq Bins' )
             prime_hdu.header['AFdata'] = ( self.omegabar.size - 2*self.k, 'Angular Freq Bins for Stokes Data' )
             prime_hdu.header['k'] = ( self.k, 'Zeeman splitting [bins]' )
-            prime_hdu.header['taures'] = ( self.tau0.size, 'Number of Tau Resolution Bins along LoS' )
-            prime_hdu.header['betaN'] = ( self.betas.size, 'Number of Optical Depths' )
-            prime_hdu.header['betamin'] = ( self.betas[0], 'Min of Optical Depths' )
-            prime_hdu.header['betamax'] = ( self.betas[-1], 'Max of Optical Depths' )
+            prime_hdu.header['taures'] = ( self.fracLOS.size, 'Number of Tau Resolution Bins along LoS' )
+            prime_hdu.header['taufN'] = ( self.taufs.size, 'Number of Optical Depths' )
+            prime_hdu.header['taufmin'] = ( self.taufs[0], 'Min of Optical Depths' )
+            prime_hdu.header['taufmax'] = ( self.taufs[-1], 'Max of Optical Depths' )
             prime_hdu.header['gOmega'] = ( float(self.k) * (self.omegabar[1]-self.omegabar[0] / pi ), 'Full Zeeman spliting rate [s^-1]' )
             
             
@@ -5402,12 +5615,12 @@ class maser_v_theta(_maser_base_):
                 prime_hdu.header['A0'] = ( self.A0, 'Einstein A coeff [s^-1]' )
                 prime_hdu.header['P0'] = ( self.P0, 'Pi Pump rate [m^-3 s^-1]' )
             
-            # Saves array of betas values as data of primary hdu
-            prime_hdu.data = betas
+            # Saves array of taufs values as data of primary hdu
+            prime_hdu.data = taufs
                
             # Makes HDU for data extension
-            ext1 = fits.ImageHDU( R_beta_theta.astype( np.float64 ) )
-            ext1.name = 'R'
+            ext1 = fits.ImageHDU( RG_tauf_theta.astype( np.float64 ) )
+            ext1.name = 'RdGamma'
             
             # Makes HDU list with each hdu as an extension
             hdu = fits.HDUList([ prime_hdu, ext1 ])
@@ -5420,26 +5633,26 @@ class maser_v_theta(_maser_base_):
                 print('Stimulated emission file {0} written.'.format( savepath ) )
             
         
+        #### If Gamma was specified, converts R/Gamma values to R ####
+        
+        if Gamma is not None:
+            R_tauf_theta = RG_tauf_theta * Gamma
+            outarray = R_tauf_theta
+        else:
+            outarray = RG_tauf_theta
         
         
+        #### Returns whichever array ####
         
-        #### Returns, either way ####
-        
-        return R_beta_theta
+        return outarray
             
-    def read_R(self, filename, verbose = True ):
+    def read_R(self, filename, Gamma = None, verbose = True ):
         """
         Reads in fits file created by method calc_R using saveas option and returns the stimulated
-        emission rate array as a function of theta and beta.
+        emission rate array, R, (if Gamma is specified), or the ratio of the stimulated emission rate to
+        the loss rate, R/Gamma (if Gamma is not specified) as a function of theta and tauf.
         
-        #### Returns, either way ####
         
-        return R_beta_theta
-            
-    def read_R(self, filename, verbose = True ):
-        """
-        Reads in fits file created by method calc_R using saveas option and returns the stimulated
-        emission rate array as a function of theta and beta.
         
         Required Parameters:
             
@@ -5449,19 +5662,33 @@ class maser_v_theta(_maser_base_):
         
         Optional Parameters:
                                 
+            
+            Gamma           Float or None
+                                [ default = None ]
+                                The loss rate in inverse seconds. If provided, will return the stimulated 
+                                emission rate, R. If set to None, will return R/Gamma. 
+                                
+                                Note: assumes fits file being read contains the values of 
+                                R/Gamma. Gamma value is only used to scale values returned.
+                                
             verbose         Boolean
                                 [ Default = True ]
                                 Whether to print feedback to terminal at various stages of the process.
         
         Updates Attributes:
             
-            betas
+            taufs
         
         Returns:
-
-            R_beta_theta    NumPy Array
-                                The stimulated emission rate, in inverse seconds, at the cloud end.
-                                2-dimensional array with shape ( number_of_theta, number_of_beta).
+            
+            outarray        NumPy Array
+                                2-dimensional array with shape ( number_of_theta, number_of_tauf ).
+                                
+                                If Gamma was specified, values contained are stimulated emission
+                                rate, R, in inverse seconds, for each (theta,tauf) combination.
+                                
+                                If Gamma was not specified, values contained are unitless values
+                                of R / Gamma.
         
         Other Functionality:
             
@@ -5510,14 +5737,19 @@ class maser_v_theta(_maser_base_):
                     if hdu[0].header[key] != check_dict[key]:
                         print( warning_temp_line.format( key, hdu[0].header[key] - check_dict[key] ) )
             
-                # Checks tau and beta values
-                check_dict = OrderedDict([ ( 'taures' , self.tau0.size ), \
-                                           ( 'betaN'  , self.betas.size ), \
-                                           ( 'betamin', self.betas[0] ), \
-                                           ( 'betamax', self.betas[-1] ) ])
+                # Checks tau and tauf values
+                #    tauf used to be called beta, so if tauf key is not in the hdu header, looks for the old
+                #    beta key
+                check_dict = OrderedDict([ ( 'taures' , self.fracLOS.size ), \
+                                           ( 'taufN'  , self.taufs.size ), \
+                                           ( 'taufmin', self.taufs[0] ), \
+                                           ( 'taufmax', self.taufs[-1] ) ])
                 for key in check_dict.keys():
-                    if hdu[0].header[key] != check_dict[key]:
-                        print( warning_temp_line.format( key, hdu[0].header[key] - check_dict[key] ) )
+                    hdu_key = str(key)
+                    if hdu_key not in hdu[0].header.keys():
+                        hdu_key = hdu_key.replace( 'tauf', 'beta' )
+                    if hdu[0].header[hdu_key] != check_dict[key]:
+                        print( warning_temp_line.format( key , hdu[0].header[hdu_key] - check_dict[key]) )
             
                 # Checks other values present for all sims
                 check_dict = OrderedDict([ ( 'cloud'   , self.cloud ), \
@@ -5567,14 +5799,52 @@ class maser_v_theta(_maser_base_):
             
             #### Retrieves other values associated with R calculation ####
             
-            # Saves array of betas values
-            self.betas = hdu[0].data
+            # Saves array of taufs values
+            self.taufs = hdu[0].data
             
-            # Retrieves R_beta_theta
-            R_beta_theta = hdu[1].data
+            # Retrieves R_tauf_theta
+            RG_tauf_theta = hdu[1].data
             
-        # Returns R array 
-        return R_beta_theta
+            
+            
+            #### Prints note saying if read-in values were summed or not ####
+            
+            # Sets brief key regarding type of data that will be returned for feedback
+            if Gamma is not None:
+                valtype = 'R'
+            else:
+                valtype = 'R/Gamma'
+            
+            # If SUMMED key actually in header
+            if 'SUMMED' in hdu[0].header.keys():
+                summed = hdu[0].header['SUMMED']
+                if summed:
+                    print('Values of {0} retrieved from {1} were summed over all angular frequency bins.'.format(\
+                            valtype, filename))
+                else:
+                    print('Values of {0} retrieved from {1} are values at the line center bin only.'.format(\
+                            valtype, filename))
+		    
+			# If files written before SUMMED key added
+            else:
+                print('Values of {0} from {1} do not have associated SUMMED key.'.format(valtype, filename))
+                print('    They were probably created before this key was added, and are therefore likely')
+                print('    summed over all wavelength bins (or are out of date).')
+            
+        
+        #### If Gamma was specified, converts R/Gamma values to R ####
+        
+        if Gamma is not None:
+            R_tauf_theta = RG_tauf_theta * Gamma
+            outarray = R_tauf_theta
+        else:
+            outarray = RG_tauf_theta
+        
+        
+        
+        #### Returns whichever array ####
+        
+        return outarray
         
         
         
@@ -5583,25 +5853,25 @@ class maser_v_theta(_maser_base_):
     
     ### Functions for plotting figures ###
     
-    def plot_mlevpa( self, beta = None, overplot_gkk = False, label = None, label_loc = 'left', ml_max = None, \
-                        legend_loc = 3, legend_cols = 1, R_beta_theta = None, figname = None, show=True ):
+    def plot_mlevpa( self, tauf = None, overplot_gkk = False, label = None, label_loc = 'left', ml_max = None, \
+                        legend_loc = 3, legend_cols = 1, R_tauf_theta = None, figname = None, show=True ):
         """
-        Plots m_l and EVPA, both vs. theta, in two windows. Does so for a single total optical depth, beta, 
+        Plots m_l and EVPA, both vs. theta, in two windows. Does so for a single total optical depth, tauf, 
         or a list of optical depths. 
         
         Intended to be run *after* stokes at a given point in cloud have been calculated or read in for a range  
-        of beta values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
+        of tauf values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
         
-        Can label curves with log(R/gOmega) value instead of beta value, but requires R_beta_theta to have been
-        calculated and/or read in with calc_R/read_R for either the full beta values in the betas attribute or
-        the subset of beta values provided on plot_mlevpa method call here.
+        Can label curves with log(R/gOmega) value instead of tauf value, but requires R_tauf_theta to have been
+        calculated and/or read in with calc_R/read_R for either the full tauf values in the taufs attribute or
+        the subset of tauf values provided on plot_mlevpa method call here.
             
         Optional Parameters:
             
-            beta            None, Float, or List of Floats 
+            tauf            None, Float, or List of Floats 
                                 [ Default = None ]
                                 The values or values of total optical depth to be plotted. If None, plots all
-                                values of beta in self.betas object attribute
+                                values of tauf in self.taufs object attribute
             
             overplot_gkk    Boolean
                                 [ Default = False ]
@@ -5637,14 +5907,14 @@ class maser_v_theta(_maser_base_):
                                 [ Default = 1 ]
                                 Number of columns in the legend.
             
-            R_beta_theta    None or 2D NumPy array
+            R_tauf_theta    None or 2D NumPy array
                                 [ Default = None ]
-                                If None, will label each curve by its beta value. If a 2D NumPy array of
+                                If None, will label each curve by its tauf value. If a 2D NumPy array of
                                 calculated R values is provided, will label each curve by its mean log(R/gOmega) 
                                 value, and print out the variation in log(R/gOmega) for each curve as a function 
-                                of theta. The array provided must have shape (Nbetas, Nthetas), where Nbetas is
-                                *either* the number of beta values in the betas object attribute *or* the number
-                                of beta values provided by beta key here.
+                                of theta. The array provided must have shape (Ntaufs, Nthetas), where Ntaufs is
+                                *either* the number of tauf values in the taufs object attribute *or* the number
+                                of tauf values provided by tauf key here.
                                 
             figname         None or String
                                 [ Default = None ]
@@ -5683,17 +5953,17 @@ class maser_v_theta(_maser_base_):
         attr_missing_msg1 = method_name + ': Object attribute {0} does not exist.'
         attr_missing_msg2 = method_name + ': Object attribute {0} does not exist for maser object with theta = {1} {2}.'
         attr_shape_msg    = method_name + ': Shape of object attribute {0} for maser object with theta = {1} {2}\n' + \
-                        ' '*(12+len(method_name)+2) + 'is not consistent with attributes betas, omegabar, and k.\n' + \
+                        ' '*(12+len(method_name)+2) + 'is not consistent with attributes taufs, omegabar, and k.\n' + \
                         ' '*(12+len(method_name)+2) + 'Attribute {0} should be NumPy array of shape ( {3}, {4} ).'
         
         # Iterates through required keywords to make sure the attributes exist; checks top level object first
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in self.__dict__.keys():
                 raise AttributeError( attr_missing_msg1.format(req_attr) )
             
-        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the attribute 
+        # Since taufs attribute must exist if we made it here, figures out the expected dimensions of the attribute 
         #   arrays
-        Nbetas = self.betas.size
+        Ntaufs = self.taufs.size
         Nfreq  = self.omegabar.size - 2 * self.k
         
         # Then checks maser objects in masers dictionary
@@ -5707,37 +5977,37 @@ class maser_v_theta(_maser_base_):
                 
                 # If it does exist and it's not tau_idx, makes sure that the array shape is correct
                 elif req_att != 'tau_idx':
-                    if self.masers[theta].__dict__[req_att].shape != ( Nbetas, Nfreq ):
-                        raise ValueError( attr_shape_msg.format(req_att, theta, self.units, Nbetas, Nfreq) )
+                    if self.masers[theta].__dict__[req_att].shape != ( Ntaufs, Nfreq ):
+                        raise ValueError( attr_shape_msg.format(req_att, theta, self.units, Ntaufs, Nfreq) )
         
         
         
         
         
         
-        #### Does some processing on requested beta value ####
+        #### Does some processing on requested tauf value ####
         
-        # If none is provided, assume all beta values in betas attribute are desired
-        if beta is None:
-            beta = list( self.betas )
-            beta_idxs = list( np.arange( len(beta) ) )
+        # If none is provided, assume all tauf values in taufs attribute are desired
+        if tauf is None:
+            tauf = list( self.taufs )
+            tauf_idxs = list( np.arange( len(tauf) ) )
         else:
         
-            # If beta provided is single value, not list, makes it into len-1 list
-            if isinstance( beta, float ) or isinstance( beta, int ):
-                beta = [ float(beta) ]
+            # If tauf provided is single value, not list, makes it into len-1 list
+            if isinstance( tauf, float ) or isinstance( tauf, int ):
+                tauf = [ float(tauf) ]
             
-            # Determines indices for each beta value in betas object attribute
-            beta_idxs = []
-            for bval in beta:
-                if float(bval) in self.betas:
-                    beta_idxs.append( np.where( self.betas == float(bval) )[0][0] )
+            # Determines indices for each tauf value in taufs object attribute
+            tauf_idxs = []
+            for bval in tauf:
+                if float(bval) in self.taufs:
+                    tauf_idxs.append( np.where( self.taufs == float(bval) )[0][0] )
                 else:
-                    err_msg = '{0}: Requested beta value, {1}, not in betas object attribute.\n'.format(method_name, bval) + \
+                    err_msg = '{0}: Requested tauf value, {1}, not in taufs object attribute.\n'.format(method_name, bval) + \
                               ' '*(12+len(method_name)+2) + \
                               'Please make sure that cloud_end_stokes attributes have been generated or read for\n' + \
                               ' '*(12+len(method_name)+2) + \
-                              'the desired beta values before calling this method.'
+                              'the desired tauf values before calling this method.'
                     raise ValueError(err_msg)
         
         
@@ -5745,67 +6015,67 @@ class maser_v_theta(_maser_base_):
         
         
         
-        # If R_beta_theta is provided, checks it and creates labels
-        if R_beta_theta is not None:
+        # If R_tauf_theta is provided, checks it and creates labels
+        if R_tauf_theta is not None:
         
             # Calculates gOmega and converts from angular frequency to frequency
             gOmega = float(self.k) * float( self.omegabar[1]-self.omegabar[0] )  / pi 
             
             # First, makes sure it's a numpy array
-            if not isinstance( R_beta_theta, np.ndarray ):
-                err_msg = method_name + ': R_beta_theta must be a NumPy array, if provided.'
+            if not isinstance( R_tauf_theta, np.ndarray ):
+                err_msg = method_name + ': R_tauf_theta must be a NumPy array, if provided.'
                 raise TypeError( err_msg )
             
             # Then, makes sure it's 2D
-            elif R_beta_theta.ndim != 2:
-                err_msg = method_name + ': R_beta_theta, if provided, must be a 2-dimensional NumPy array. (Current dimensions: {0})'
-                raise ValueError( err_msg.format(  R_beta_theta.ndim ) )
+            elif R_tauf_theta.ndim != 2:
+                err_msg = method_name + ': R_tauf_theta, if provided, must be a 2-dimensional NumPy array. (Current dimensions: {0})'
+                raise ValueError( err_msg.format(  R_tauf_theta.ndim ) )
             
-            # Then checks number of values along theta axis; should have shape ( Nbetas, Nthetas )
-            elif R_beta_theta.shape[1] != self.thetas.size:
-                err_msg = method_name + ': Number of values along theta (1st) axis in R_beta_theta must equal the number of thetas in the object attribute.\n'+\
-                        ' '*(12+len(method_name)+2) + 'Size of thetas array: {0},   Values along theta axis in R_beta_theta: {1}'
-                raise ValueError( err_msg.format( self.thetas.size, R_beta_theta.shape[1] ) )
+            # Then checks number of values along theta axis; should have shape ( Ntaufs, Nthetas )
+            elif R_tauf_theta.shape[1] != self.thetas.size:
+                err_msg = method_name + ': Number of values along theta (1st) axis in R_tauf_theta must equal the number of thetas in the object attribute.\n'+\
+                        ' '*(12+len(method_name)+2) + 'Size of thetas array: {0},   Values along theta axis in R_tauf_theta: {1}'
+                raise ValueError( err_msg.format( self.thetas.size, R_tauf_theta.shape[1] ) )
             
-            # Then checks if number of values along beta axis are the same size as beta array
-            elif R_beta_theta.shape[0] == len(beta):
+            # Then checks if number of values along tauf axis are the same size as tauf array
+            elif R_tauf_theta.shape[0] == len(tauf):
                 
-                # Calculates array of log(R/gOmega); should still have shape ( Nbeta, Ntheta )
-                logRpts = np.log10( R_beta_theta / gOmega )
+                # Calculates array of log(R/gOmega); should still have shape ( Ntauf, Ntheta )
+                logRpts = np.log10( R_tauf_theta / gOmega )
             
-            # If number of values along beta axis different from beta array but same as betas attribute, 
-            #   calculates logRpts as pared down from original R_beta_theta array to only include 
-            #   requested beta values
-            elif R_beta_theta.shape[0] == self.betas.size:
-                logRpts = np.log10( R_beta_theta[beta_idxs] / gOmega )
+            # If number of values along tauf axis different from tauf array but same as taufs attribute, 
+            #   calculates logRpts as pared down from original R_tauf_theta array to only include 
+            #   requested tauf values
+            elif R_tauf_theta.shape[0] == self.taufs.size:
+                logRpts = np.log10( R_tauf_theta[tauf_idxs] / gOmega )
                 
             # If neither are true, raises an error
             else:
-                err_msg = method_name + ': Number of values along beta (0th) axis in R_beta_theta must equal the number of beta values provided OR.\n'+\
-                        ' '*(12+len(method_name)+2) + 'the number of beta values in the betas object attribute.\n' + \
-                        ' '*(12+len(method_name)+2) + 'Betas provided: {0},  Size of betas array: {1},   Values along beta axis in R_beta_theta: {2}'
-                raise ValueError( err_msg.format( len(beta), self.betas.size, R_beta_theta.shape[0] ) )
+                err_msg = method_name + ': Number of values along tauf (0th) axis in R_tauf_theta must equal the number of tauf values provided OR.\n'+\
+                        ' '*(12+len(method_name)+2) + 'the number of tauf values in the taufs object attribute.\n' + \
+                        ' '*(12+len(method_name)+2) + 'taufs provided: {0},  Size of taufs array: {1},   Values along tauf axis in R_tauf_theta: {2}'
+                raise ValueError( err_msg.format( len(tauf), self.taufs.size, R_tauf_theta.shape[0] ) )
                 
-            # If no error was raised, calculates the mean log(R/gOmega) vs theta for each included beta value
+            # If no error was raised, calculates the mean log(R/gOmega) vs theta for each included tauf value
             mean_logR = np.mean( logRpts, axis=1 )
             
-            # Calculates range of logR/gOmega across theta for each beta
+            # Calculates range of logR/gOmega across theta for each tauf
             range_logR = np.array([  np.max(logRpts[i,:]) - np.min(logRpts[i,:]) for i in range(logRpts.shape[0])  ])
             
             # Calculates variation as a percent of the mean
             logR_percent_change = np.abs( 100. * range_logR / mean_logR )
             
-            # Prints output of percent variation across theta for each value of beta
+            # Prints output of percent variation across theta for each value of tauf
             print('Percent Change in log(R/gOmega) as a function of theta:')
-            for i in range(len(beta)):
-                print('  beta = {0: >5}  --  log(R/gOmega) = {1: >5}  --  {2:.2e} %'.format( beta[i], round(mean_logR[i],1), logR_percent_change[i] ))
+            for i in range(len(tauf)):
+                print('  tauf = {0: >5}  --  log(R/gOmega) = {1: >5}  --  {2:.2e} %'.format( tauf[i], round(mean_logR[i],1), logR_percent_change[i] ))
             
             # Create curve labels
             curve_labels = [ r'$\log(R/g\Omega) = $' + str(round(x,1)) for x in mean_logR  ]
         
-        # If R_beta_theta not provided, label is just the value of beta
+        # If R_tauf_theta not provided, label is just the value of tauf
         else:
-            curve_labels = beta
+            curve_labels = tauf
             
                 
                 
@@ -5817,20 +6087,20 @@ class maser_v_theta(_maser_base_):
         
         #### Determine the colors and markers ####
         
-        if len( beta ) <= 7:
-            color_list  = color_sets[ 7][:len(beta)]
-            marker_list = marker_sets[7][:len(beta)]
-            fill_list = [ 'full', ] * len(beta)
-        elif len(beta) in [8,9]:
-            color_list  = color_sets[ len(beta)]
-            marker_list = marker_sets[len(beta)]
-            fill_list = [ 'full', ] * len(beta)
+        if len( tauf ) <= 7:
+            color_list  = color_sets[ 7][:len(tauf)]
+            marker_list = marker_sets[7][:len(tauf)]
+            fill_list = [ 'full', ] * len(tauf)
+        elif len(tauf) in [8,9]:
+            color_list  = color_sets[ len(tauf)]
+            marker_list = marker_sets[len(tauf)]
+            fill_list = [ 'full', ] * len(tauf)
         else:
-            color_list  = list( islice( cycle( color_sets[ 8] ), len(beta) ))
-            marker_list = list( islice( cycle( marker_sets[9] ), len(beta) ))
+            color_list  = list( islice( cycle( color_sets[ 8] ), len(tauf) ))
+            marker_list = list( islice( cycle( marker_sets[9] ), len(tauf) ))
             fill_template = [ 'full', ]*8
             fill_template.extend( ['none',]*8 )
-            fill_list   = list( islice( cycle( fill_template ), len(beta) ))
+            fill_list   = list( islice( cycle( fill_template ), len(tauf) ))
         
         
         
@@ -5861,15 +6131,15 @@ class maser_v_theta(_maser_base_):
         fig, ax = P.subplots(nrows=2, ncols=1, sharex=True, figsize = (5.5,4.5))
         fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.91 )
         
-        # Iterates through requested beta values for plot and plots them
-        for i in range(len(beta)):
+        # Iterates through requested tauf values for plot and plots them
+        for i in range(len(tauf)):
             
             # Gets the index that corresponds to this total optical depth in the stacked arrays
-            beta_idx = beta_idxs[i]
+            tauf_idx = tauf_idxs[i]
             
             # Makes the lists of line center ml and evpa values to plot
-            plot_ml   = [ self.masers[theta].stacked_ml[   beta_idx , jcenter ] for theta in self.thetas ]
-            plot_evpa = [ ( self.masers[theta].stacked_evpa[ beta_idx , jcenter ] + pi ) % pi for theta in self.thetas ]
+            plot_ml   = [ self.masers[theta].stacked_ml[   tauf_idx , jcenter ] for theta in self.thetas ]
+            plot_evpa = [ ( self.masers[theta].stacked_evpa[ tauf_idx , jcenter ] + pi ) % pi for theta in self.thetas ]
             # Actually plots with corresponding color/marker/fill
             ax[0].plot( self.thetas, plot_ml  , marker = marker_list[i], \
                                                 color = color_list[i], fillstyle = fill_list[i] )
@@ -5929,7 +6199,7 @@ class maser_v_theta(_maser_base_):
         ax[1].set_yticklabels( tick_labels )
         
         # Make the legend
-        if R_beta_theta is None:
+        if R_tauf_theta is None:
             ax[1].legend(loc=legend_loc, fontsize='small', ncol=legend_cols)
         else:
             ax[1].legend(loc=legend_loc, fontsize='x-small', ncol=legend_cols)
@@ -5963,14 +6233,14 @@ class maser_v_theta(_maser_base_):
         else:
             P.close()
     
-    def plot_v_didv( self, freqoff, freq0, beta = None, pbnorm = False, label = None, label_loc = 'left', ylims = None, \
+    def plot_v_didv( self, freqoff, freq0, tauf = None, pbnorm = False, label = None, label_loc = 'left', ylims = None, \
                         legend_loc = 3, legend_cols = 1, figname = None, show = True ):
         """
         Plots stokv / ( d stoki / d velocity ) vs. cos(theta). Does so for a single total optical depth or a list 
-        of optical depths, beta.
+        of optical depths, tauf.
         
         Intended to be run *after* stokes at a given point in cloud have been calculated or read in for a range  
-        of beta values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
+        of tauf values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
         
         Required Parameters:
             
@@ -5985,10 +6255,10 @@ class maser_v_theta(_maser_base_):
             
         Optional Parameters:
             
-            beta            None, Float, or List of Floats 
+            tauf            None, Float, or List of Floats 
                                 [ Default = None ]
                                 The values or values of total optical depth to be plotted. If None, plots all
-                                values of beta in self.betas object attribute
+                                values of tauf in self.taufs object attribute
                                 
             pbnorm          Boolean
                                 [ Default = False ]
@@ -6066,13 +6336,13 @@ class maser_v_theta(_maser_base_):
                      ' '*16+'                                    Should be 2D NumPy array with {3} values along 0-axis (currently {4}).'
         
         # Iterates through required keywords to make sure the attributes exist; checks top level object first
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in self.__dict__.keys():
                 raise AttributeError( attr_missing_msg1.format(req_attr) )
             
-        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the attribute 
+        # Since taufs attribute must exist if we made it here, figures out the expected dimensions of the attribute 
         #   arrays
-        Nbetas = self.betas.size
+        Ntaufs = self.taufs.size
         Nfreq  = self.omegabar.size - 2 * self.k
         
         
@@ -6097,51 +6367,51 @@ class maser_v_theta(_maser_base_):
                     elif self.masers[theta].__dict__[req_att].shape[1] != Nfreq:
                         raise AttributeError( attr_dim0_msg.format(req_att, theta, self.units, Nfreq, self.masers[theta].__dict__[req_att].shape[0] ) )
             
-            # Checks size of 0th (beta) axis of those attribute arrays for every theta value
+            # Checks size of 0th (tauf) axis of those attribute arrays for every theta value
             if req_att != 'tau_idx':
-                Nbeta_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
+                Ntauf_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
             
-                # If not every maser object has the same number of betas (and this hasn't been done for a previous 
-                #   attribute), prints a warning and adjusts number of betas
-                if np.unique( Nbeta_per_theta ).size != 1 and Nbeta_per_theta.min() != Nbetas:
+                # If not every maser object has the same number of taufs (and this hasn't been done for a previous 
+                #   attribute), prints a warning and adjusts number of taufs
+                if np.unique( Ntauf_per_theta ).size != 1 and Ntauf_per_theta.min() != Ntaufs:
                         print('MASER_V_THETA.PLOT_FREQ_THETA WARNING:    Optical depths in object attribute {0} not consistent across theta.\n' + \
                               '                                          Highest value of optical depth present for all theta is {1}. ({2} values.)'.format( \
-                              req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                        Nbetas = Nbeta_per_theta.min()
+                              req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                        Ntaufs = Ntauf_per_theta.min()
             
-                # If every maser object does have the same number of betas but its less than that expected from Nbetas, 
-                #   prints a warning and adjusts number of betas
-                elif  Nbeta_per_theta.min() != Nbetas:
-                        print('MASER_V_THETA.PLOT_FREQ_THETA WARNING:    Optical depths in object attribute {0} not consistent with betas attribute.\n' + \
+                # If every maser object does have the same number of taufs but its less than that expected from Ntaufs, 
+                #   prints a warning and adjusts number of taufs
+                elif  Ntauf_per_theta.min() != Ntaufs:
+                        print('MASER_V_THETA.PLOT_FREQ_THETA WARNING:    Optical depths in object attribute {0} not consistent with taufs attribute.\n' + \
                               '                                          Highest value of optical depth present for all theta is {1}. ({2} values.)'.format( \
-                              req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                        Nbetas = Nbeta_per_theta.min()
+                              req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                        Ntaufs = Ntauf_per_theta.min()
         
         
         
         
         
-        #### Does some processing on requested beta value ####
+        #### Does some processing on requested tauf value ####
         
-        # If none is provided, assume all beta values in betas attribute are desired
-        if beta is None:
-            beta = list( self.betas )
-            beta_idxs = list( np.arange( len(beta) ) )[ : np.array(ibmax).max() ]
+        # If none is provided, assume all tauf values in taufs attribute are desired
+        if tauf is None:
+            tauf = list( self.taufs )
+            tauf_idxs = list( np.arange( len(tauf) ) )[ : np.array(ibmax).max() ]
         else:
         
-            # If beta provided is single value, not list, makes it into len-1 list
-            if isinstance( beta, float ) or isinstance( beta, int ):
-                beta = [ float(beta) ]
+            # If tauf provided is single value, not list, makes it into len-1 list
+            if isinstance( tauf, float ) or isinstance( tauf, int ):
+                tauf = [ float(tauf) ]
             
-            # Determines indices for each beta value in betas object attribute
-            beta_idxs = []
-            for bval in beta:
-                if float(bval) in self.betas:
-                    beta_idxs.append( np.where( self.betas == float(bval) )[0][0] )
+            # Determines indices for each tauf value in taufs object attribute
+            tauf_idxs = []
+            for bval in tauf:
+                if float(bval) in self.taufs:
+                    tauf_idxs.append( np.where( self.taufs == float(bval) )[0][0] )
                 else:
-                    err_msg = 'Requested beta value, {0}, not in betas object attribute.\n'.format(bval) + \
+                    err_msg = 'Requested tauf value, {0}, not in taufs object attribute.\n'.format(bval) + \
                               '    Please make sure that cloud_end_stokes attributes have been generated or read for\n' + \
-                              '    the desired beta values before calling this method.'
+                              '    the desired tauf values before calling this method.'
                     raise ValueError(err_msg)
         
         
@@ -6149,20 +6419,20 @@ class maser_v_theta(_maser_base_):
         
         #### Determine the colors and markers ####
         
-        if len( beta ) <= 7:
-            color_list  = color_sets[ 7][:len(beta)]
-            marker_list = marker_sets[7][:len(beta)]
-            fill_list = [ 'full', ] * len(beta)
-        elif len(beta) in [8,9]:
-            color_list  = color_sets[ len(beta)]
-            marker_list = marker_sets[len(beta)]
-            fill_list = [ 'full', ] * len(beta)
+        if len( tauf ) <= 7:
+            color_list  = color_sets[ 7][:len(tauf)]
+            marker_list = marker_sets[7][:len(tauf)]
+            fill_list = [ 'full', ] * len(tauf)
+        elif len(tauf) in [8,9]:
+            color_list  = color_sets[ len(tauf)]
+            marker_list = marker_sets[len(tauf)]
+            fill_list = [ 'full', ] * len(tauf)
         else:
-            color_list  = list( islice( cycle( color_sets[ 8] ), len(beta) ))
-            marker_list = list( islice( cycle( marker_sets[9] ), len(beta) ))
+            color_list  = list( islice( cycle( color_sets[ 8] ), len(tauf) ))
+            marker_list = list( islice( cycle( marker_sets[9] ), len(tauf) ))
             fill_template = [ 'full', ]*8
             fill_template.extend( ['none',]*8 )
-            fill_list   = list( islice( cycle( fill_template ), len(beta) ))
+            fill_list   = list( islice( cycle( fill_template ), len(tauf) ))
         
         
         
@@ -6198,6 +6468,7 @@ class maser_v_theta(_maser_base_):
         velms = ( ( 1.0 - velms_term**2 ) / ( 1.0 + velms_term**2 ) ) * c # m/s
     
         # If normalization by pB is being performed, calculates it as the zeeman split in m/s
+        #	i.e. pB = Delta velocity_Zeeman
         if pbnorm:
         
             # Retrieves the zeeman splitting in angular frequency; units of s^-1
@@ -6231,18 +6502,18 @@ class maser_v_theta(_maser_base_):
         # Initializes flag to say if we're flipping the y-axis
         flip = None
         
-        # Iterates through requested beta values for plot and plots them
-        for i, bval in enumerate(beta):
+        # Iterates through requested tauf values for plot and plots them
+        for i, bval in enumerate(tauf):
             
             # Gets the index that corresponds to this total optical depth in the stacked arrays
-            beta_idx = beta_idxs[i]
+            tauf_idx = tauf_idxs[i]
             
             # Gets array of stokes v values to plot, one for each theta
-            plot_stokv = np.array([ self.masers[theta].stacked_stokv[    beta_idx , jplot   ] for theta in self.thetas ])
+            plot_stokv = np.array([ self.masers[theta].stacked_stokv[    tauf_idx , jplot   ] for theta in self.thetas ])
             
             # Gets array of di/dvel for each maser object
-            plot_stokvi_m = np.array([ self.masers[theta].stacked_stoki[ beta_idx , jplot-1 ] for theta in self.thetas ])
-            plot_stokvi_p = np.array([ self.masers[theta].stacked_stoki[ beta_idx , jplot+1 ] for theta in self.thetas ])
+            plot_stokvi_m = np.array([ self.masers[theta].stacked_stoki[ tauf_idx , jplot-1 ] for theta in self.thetas ])
+            plot_stokvi_p = np.array([ self.masers[theta].stacked_stoki[ tauf_idx , jplot+1 ] for theta in self.thetas ])
             didv = ( plot_stokvi_p - plot_stokvi_m ) / dv
             
             # Divides stokes v by didvel for plotting
@@ -6357,7 +6628,7 @@ class maser_v_theta(_maser_base_):
         else:
             P.close()
     
-    def plot_freq_theta( self, plotvalue, beta, convert_freq = True, interp = 'cubic', subtitle = None, \
+    def plot_freq_theta( self, plotvalue, tauf, convert_freq = True, interp = 'cubic', subtitle = None, \
                         figname = None, show = True, verbose = True ):
         """
         Plots desired value vs. frequency (x-axis) and total optical depth of the cloud (y-axis).
@@ -6365,7 +6636,7 @@ class maser_v_theta(_maser_base_):
         Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), or fracu (stoku/stoki).
         
         Intended to be run *after* stokes at a given point in cloud have been calculated or read in for a range  
-        of beta values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
+        of tauf values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
         
         Required Parameters:
             
@@ -6373,8 +6644,8 @@ class maser_v_theta(_maser_base_):
                                 What to plot. Options are 'mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 
                                 'fracq' (for stokq/stoki), or 'fracu' for (stoku/stoki).
             
-            beta            Float or Integer
-                                Value of the total optical depth to be plotted. Must be in betas attribute.
+            tauf            Float or Integer
+                                Value of the total optical depth to be plotted. Must be in taufs attribute.
             
         Optional Parameters:
             
@@ -6428,13 +6699,13 @@ class maser_v_theta(_maser_base_):
                      ' '*16+'                                        Should be 2D NumPy array with {3} values along 0-axis (currently {4}).'
         
         # Iterates through required keywords to make sure the attributes exist; checks top level object first
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in self.__dict__.keys():
                 raise AttributeError( attr_missing_msg1.format(req_attr) )
             
-        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the attribute 
+        # Since taufs attribute must exist if we made it here, figures out the expected dimensions of the attribute 
         #   arrays
-        Nbetas = self.betas.size
+        Ntaufs = self.taufs.size
         Nfreq  = self.omegabar.size - 2 * self.k
         
         # Then checks maser objects in masers dictionary
@@ -6458,25 +6729,25 @@ class maser_v_theta(_maser_base_):
                     elif self.masers[theta].__dict__[req_att].shape[1] != Nfreq:
                         raise AttributeError( attr_dim0_msg.format(req_att, theta, self.units, Nfreq, self.masers[theta].__dict__[req_att].shape[0] ) )
             
-            # Checks size of 0th (beta) axis of those attribute arrays for every theta value
+            # Checks size of 0th (tauf) axis of those attribute arrays for every theta value
             if req_att != 'tau_idx':
-                Nbeta_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
+                Ntauf_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
             
-                # If not every maser object has the same number of betas (and this hasn't been done for a previous 
-                #   attribute), prints a warning and adjusts number of betas
-                if np.unique( Nbeta_per_theta ).size != 1 and Nbeta_per_theta.min() != Nbetas:
+                # If not every maser object has the same number of taufs (and this hasn't been done for a previous 
+                #   attribute), prints a warning and adjusts number of taufs
+                if np.unique( Ntauf_per_theta ).size != 1 and Ntauf_per_theta.min() != Ntaufs:
                         print('MASER_V_THETA.PLOT_FREQ_THETA WARNING:    Optical depths in object attribute {0} not consistent across theta.\n' + \
                               '                                          Highest value of optical depth present for all theta is {1}. ({2} values.)'.format( \
-                              req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                        Nbetas = Nbeta_per_theta.min()
+                              req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                        Ntaufs = Ntauf_per_theta.min()
             
-                # If every maser object does have the same number of betas but its less than that expected from Nbetas, 
-                #   prints a warning and adjusts number of betas
-                elif  Nbeta_per_theta.min() != Nbetas:
-                        print('MASER_V_THETA.PLOT_FREQ_THETA WARNING:    Optical depths in object attribute {0} not consistent with betas attribute.\n' + \
+                # If every maser object does have the same number of taufs but its less than that expected from Ntaufs, 
+                #   prints a warning and adjusts number of taufs
+                elif  Ntauf_per_theta.min() != Ntaufs:
+                        print('MASER_V_THETA.PLOT_FREQ_THETA WARNING:    Optical depths in object attribute {0} not consistent with taufs attribute.\n' + \
                               '                                          Highest value of optical depth present for all theta is {1}. ({2} values.)'.format( \
-                              req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                        Nbetas = Nbeta_per_theta.min()
+                              req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                        Ntaufs = Ntauf_per_theta.min()
         
         # Makes sure that specified plotvalue is allowed:
         if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu']:
@@ -6491,19 +6762,19 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Processing beta ####
+        #### Processing tauf ####
         
-        # Makes sure beta is a float
-        beta = float(beta)
+        # Makes sure tauf is a float
+        tauf = float(tauf)
         
-        # Finds index of beta in betas array
-        if beta in self.betas[:Nbetas]:
-            ib = np.where( self.betas == beta )[0][0]
-        elif beta not in self.betas:
-            err_msg = "MASER_V_THETA.PLOT_FREQ_THETA ERROR:    Requested beta value, {0}, not in betas attribute array.\n".format(beta) 
+        # Finds index of tauf in taufs array
+        if tauf in self.taufs[:Ntaufs]:
+            ib = np.where( self.taufs == tauf )[0][0]
+        elif tauf not in self.taufs:
+            err_msg = "MASER_V_THETA.PLOT_FREQ_THETA ERROR:    Requested tauf value, {0}, not in taufs attribute array.\n".format(tauf) 
             raise ValueError(err_msg)
         else:
-            err_msg = "MASER_V_THETA.PLOT_FREQ_THETA ERROR:    Requested beta value, {0}, not available for all thetas.\n".format(beta) 
+            err_msg = "MASER_V_THETA.PLOT_FREQ_THETA ERROR:    Requested tauf value, {0}, not available for all thetas.\n".format(tauf) 
             raise ValueError(err_msg)
         
         
@@ -6543,7 +6814,7 @@ class maser_v_theta(_maser_base_):
             temparray = np.array([  self.masers[theta].stacked_stoki[ ib , : ] for theta in self.thetas  ])
             
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes i at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'Stokes i at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'viridis'
         
         # Next, Stokes q
@@ -6553,7 +6824,7 @@ class maser_v_theta(_maser_base_):
             temparray = np.array([  self.masers[theta].stacked_stokq[ ib , : ] for theta in self.thetas  ])
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes q at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'Stokes q at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'RdBu'
         
         # Next, Stokes u
@@ -6563,7 +6834,7 @@ class maser_v_theta(_maser_base_):
             temparray = np.array([  self.masers[theta].stacked_stoku[ ib , : ] for theta in self.thetas  ])
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes u at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'Stokes u at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'RdBu'
         
         # Next, Stokes v
@@ -6573,7 +6844,7 @@ class maser_v_theta(_maser_base_):
             temparray = np.array([  self.masers[theta].stacked_stokv[ ib , : ] for theta in self.thetas  ])
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes v at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'Stokes v at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'RdBu'
         
         # Next, fractional stokes q
@@ -6584,7 +6855,7 @@ class maser_v_theta(_maser_base_):
                                                                                                 for theta in self.thetas  ])
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes q/i at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'Stokes q/i at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'RdBu'
         
         # Next, fractional stokes u
@@ -6595,7 +6866,7 @@ class maser_v_theta(_maser_base_):
                                                                                                 for theta in self.thetas  ])
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'Stokes u/i at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'Stokes u/i at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'RdBu'
         
         # Next, does ml
@@ -6605,7 +6876,7 @@ class maser_v_theta(_maser_base_):
             temparray = np.array([  self.masers[theta].stacked_ml[ ib , : ] for theta in self.thetas  ])
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'$m_l$ at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'$m_l$ at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'viridis'
         
         # Next, does mc
@@ -6615,7 +6886,7 @@ class maser_v_theta(_maser_base_):
             temparray = np.array([  self.masers[theta].stacked_mc[ ib , : ] for theta in self.thetas  ])
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'$m_c$ at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'$m_c$ at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'RdBu'
         
         # Finally, does evpa
@@ -6625,7 +6896,7 @@ class maser_v_theta(_maser_base_):
             temparray = ( np.array([  self.masers[theta].stacked_evpa[ ib , : ] for theta in self.thetas  ]) + pi ) % pi
         
             # Sets plot title & colormap, while we're here
-            fig_title = r'EVPA at Cloud End with $\tau=$'+str(beta)
+            fig_title = r'EVPA at Cloud End with $\tau_f=$'+str(tauf)
             cmap = 'RdBu'
             
             
@@ -6736,7 +7007,7 @@ class maser_v_theta(_maser_base_):
             else:
                 P.close()
     
-    def plot_freq_tau( self, theta, plotvalue, betamax = None, plotbetamax = None, convert_freq = True, \
+    def plot_freq_tau( self, theta, plotvalue, taufmax = None, plottaufmax = None, convert_freq = True, \
                         tau_scale = 'linear', interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
         """
         Plots desired value vs. frequency (x-axis) and total optical depth of the cloud (y-axis) for a given 
@@ -6744,7 +7015,7 @@ class maser_v_theta(_maser_base_):
     
         Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), or fracu (stoku/stoki).
         
-        Intended to be run *after* stokes at a given point in cloud have been read in for a range of beta values
+        Intended to be run *after* stokes at a given point in cloud have been read in for a range of tauf values
         with cloud_end_stokes method.
         
         Required Parameters:
@@ -6760,16 +7031,16 @@ class maser_v_theta(_maser_base_):
             
         Optional Parameters:
             
-            betamax         None or Float 
+            taufmax         None or Float 
                                 [ Default = None ]
-                                Maximum value of beta to show data for in the plot. If None, plots all available 
+                                Maximum value of tauf to show data for in the plot. If None, plots all available 
                                 data.
                                 
-            plotbetamax     Float or None
+            plottaufmax     Float or None
                                 [ Default = None ]
                                 Y-limit (optical depth) shown on the plot axes. If None, will be the same as
-                                betamax. (Only useful if you want to set the y-limit used by the figure to be
-                                the same as other figures despite not having beta up to that value for this
+                                taufmax. (Only useful if you want to set the y-limit used by the figure to be
+                                the same as other figures despite not having tauf up to that value for this
                                 parameter set.)
                         
             convert_freq    Boolean 
@@ -6816,17 +7087,17 @@ class maser_v_theta(_maser_base_):
         
         # If it is a valid key, runs plot_freq_tau for that object
         else:
-            self.masers[ float(theta) ].plot_freq_tau( plotvalue, betamax = betamax, plotbetamax = plotbetamax, \
+            self.masers[ float(theta) ].plot_freq_tau( plotvalue, taufmax = taufmax, plottaufmax = plottaufmax, \
                                                        convert_freq = convert_freq, tau_scale = tau_scale, interp = interp, \
                                                        subtitle = subtitle, figname = figname, show = show, verbose = verbose )
     
-    def plot_theta_tau( self, plotvalue, freqoff = 0, betamax = None, plotbetamax = None, contours = False, \
+    def plot_theta_tau( self, plotvalue, freqoff = 0, taufmax = None, plottaufmax = None, contours = False, \
                         convert_freq = True, tau_scale = 'linear', interp = 'cubic', subtitle = None, label = None, \
                         label_loc = 'left', figname = None, show = True, verbose = True ):
         """
         Plots desired value at some offset from line center vs. theta (x-axis) and total optical depth (y-axis).
         
-        Intended to be run *after* stokes at a given point in cloud have been read in for a range of beta values
+        Intended to be run *after* stokes at a given point in cloud have been read in for a range of tauf values
         with cloud_end_stokes method.
         
         Required Parameters:
@@ -6846,19 +7117,19 @@ class maser_v_theta(_maser_base_):
                                 If a list of integers, individual values should be the same as in the case of a 
                                 single integer, but plotted output will be summed across those wavelength bins.
                                 If None, calculates the desired plotvalue from the peak stokes values across 
-                                angular frequency for each theta and log(R/gOmega). 
+                                angular frequency for each theta and tauf. 
                                 NOTE: None is NOT the same as 0!!!
             
-            betamax         None or Float 
+            taufmax         None or Float 
                                 [ Default = None ]
-                                Maximum value of beta to show data for in the plot. If None, plots all available 
+                                Maximum value of tauf to show data for in the plot. If None, plots all available 
                                 data.
                                 
-            plotbetamax     Float or None
+            plottaufmax     Float or None
                                 [ Default = None ]
                                 Y-limit (optical depth) shown on the plot axes. If None, will be the same as
-                                betamax. (Only useful if you want to set the y-limit used by the figure to be
-                                the same as other figures despite not having beta up to that value for this
+                                taufmax. (Only useful if you want to set the y-limit used by the figure to be
+                                the same as other figures despite not having tauf up to that value for this
                                 parameter set.)
                         
             contours        Boolean
@@ -6887,8 +7158,8 @@ class maser_v_theta(_maser_base_):
             label          None or String
                                 [ Default = None ]
                                 Y-limit (optical depth) shown on the plot axes. If None, will be the same as
-                                betamax. (Only useful if you want to set the y-limit used by the figure to be
-                                the same as other figures despite not having beta up to that value for this
+                                taufmax. (Only useful if you want to set the y-limit used by the figure to be
+                                the same as other figures despite not having tauf up to that value for this
                                 parameter set.)
                         
             label_loc      String: 'left' or 'right'
@@ -6931,13 +7202,13 @@ class maser_v_theta(_maser_base_):
                      ' '*16+'                                        Should be 2D NumPy array with {3} values along 0-axis (currently {4}).'
         
         # Iterates through required keywords to make sure the attributes exist; checks top level object first
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in self.__dict__.keys():
                 raise AttributeError( attr_missing_msg1.format(req_attr) )
             
-        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the attribute 
+        # Since taufs attribute must exist if we made it here, figures out the expected dimensions of the attribute 
         #   arrays
-        Nbetas = self.betas.size
+        Ntaufs = self.taufs.size
         Nfreq  = self.omegabar.size - 2 * self.k
         
         # Then checks maser objects in masers dictionary
@@ -6961,25 +7232,25 @@ class maser_v_theta(_maser_base_):
                     elif self.masers[theta].__dict__[req_att].shape[1] != Nfreq:
                         raise AttributeError( attr_dim0_msg.format(req_att, theta, self.units, Nfreq, self.masers[theta].__dict__[req_att].shape[0] ) )
             
-            # Checks size of 0th (beta) axis of those attribute arrays for every theta value
+            # Checks size of 0th (tauf) axis of those attribute arrays for every theta value
             if req_att != 'tau_idx':
-                Nbeta_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
+                Ntauf_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
             
-                # If not every maser object has the same number of betas (and this hasn't been done for a previous 
-                #   attribute), prints a warning and adjusts number of betas
-                if np.unique( Nbeta_per_theta ).size != 1 and Nbeta_per_theta.min() != Nbetas:
+                # If not every maser object has the same number of taufs (and this hasn't been done for a previous 
+                #   attribute), prints a warning and adjusts number of taufs
+                if np.unique( Ntauf_per_theta ).size != 1 and Ntauf_per_theta.min() != Ntaufs:
                         print('MASER_V_THETA.PLOT_THETA_TAU WARNING:    Optical depths in object attribute {0} not consistent across theta.\n' + \
                               '                                         Highest value of optical depth present for all theta is {1}. ({2} values.)'.format( \
-                              req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                        Nbetas = Nbeta_per_theta.min()
+                              req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                        Ntaufs = Ntauf_per_theta.min()
             
-                # If every maser object does have the same number of betas but its less than that expected from Nbetas, 
-                #   prints a warning and adjusts number of betas
-                elif  Nbeta_per_theta.min() != Nbetas:
-                        print('MASER_V_THETA.PLOT_THETA_TAU WARNING:    Optical depths in object attribute {0} not consistent with betas attribute.\n' + \
+                # If every maser object does have the same number of taufs but its less than that expected from Ntaufs, 
+                #   prints a warning and adjusts number of taufs
+                elif  Ntauf_per_theta.min() != Ntaufs:
+                        print('MASER_V_THETA.PLOT_THETA_TAU WARNING:    Optical depths in object attribute {0} not consistent with taufs attribute.\n' + \
                               '                                         Highest value of optical depth present for all theta is {1}. ({2} values.)'.format( \
-                              req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                        Nbetas = Nbeta_per_theta.min()
+                              req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                        Ntaufs = Ntauf_per_theta.min()
         
         # Makes sure that specified plotvalue is allowed:
         if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu', 'vmetric', 'quv', 'mlmc']:
@@ -6996,38 +7267,38 @@ class maser_v_theta(_maser_base_):
             raise ValueError(err_msg)
 
         
-        # If using default betamax, just uses last one with stokes for all theta values present
-        elif betamax is None:
-            ibmax = Nbetas - 1
-            betamax = self.betas[ibmax]
+        # If using default taufmax, just uses last one with stokes for all theta values present
+        elif taufmax is None:
+            ibmax = Ntaufs - 1
+            taufmax = self.taufs[ibmax]
         
 
         
         
         
-        #### Processing defaults for betamax and plotbetamax ####
+        #### Processing defaults for taufmax and plottaufmax ####
         
-        # Finds index of maximum beta present for all ml arrays
-        if betamax is not None:
+        # Finds index of maximum tauf present for all ml arrays
+        if taufmax is not None:
         
-            # Finds index of betamax in betas array
-            if betamax in self.betas[:Nbetas]:
-                ibmax = np.where( self.betas == betamax )[0][0]
-            elif betamax not in self.betas:
-                err_msg = "MASER_V_THETA.PLOT_THETA_TAU ERROR:    Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
+            # Finds index of taufmax in taufs array
+            if taufmax in self.taufs[:Ntaufs]:
+                ibmax = np.where( self.taufs == taufmax )[0][0]
+            elif taufmax not in self.taufs:
+                err_msg = "MASER_V_THETA.PLOT_THETA_TAU ERROR:    Requested tauf value, {0}, not in taufs attribute array.\n".format(taufmax) 
                 raise ValueError(err_msg)
             else:
-                err_msg = "MASER_V_THETA.PLOT_THETA_TAU ERROR:    Requested beta value, {0}, not available for all thetas.\n".format(betamax) 
+                err_msg = "MASER_V_THETA.PLOT_THETA_TAU ERROR:    Requested tauf value, {0}, not available for all thetas.\n".format(taufmax) 
                 raise ValueError(err_msg)
         
-        # If using default betamax, just uses last one with stokes for all theta values present
-        elif betamax is None:
-            ibmax = Nbetas - 1
-            betamax = self.betas[ibmax]
+        # If using default taufmax, just uses last one with stokes for all theta values present
+        elif taufmax is None:
+            ibmax = Ntaufs - 1
+            taufmax = self.taufs[ibmax]
         
-        # Sets plotbetamax, if not set
-        if plotbetamax is None:
-            plotbetamax = betamax
+        # Sets plottaufmax, if not set
+        if plottaufmax is None:
+            plottaufmax = taufmax
         
 
         
@@ -7372,7 +7643,7 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Regridding array for smooth distribution of theta and beta solutions ####
+        #### Regridding array for smooth distribution of theta and tauf solutions ####
         
         if temparray.size != 0:
             
@@ -7380,32 +7651,32 @@ class maser_v_theta(_maser_base_):
                 print('Regridding data...')
             
             # Ravels temparray to prepare for regridding
-            # Before ravel, has shape (beta, theta)
+            # Before ravel, has shape (tauf, theta)
             temparray = np.ravel( temparray )
         
-            # Creates grid of existing theta and beta values
-            # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
-            thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+            # Creates grid of existing theta and tauf values
+            # Resulting arrays have shape ( tauf, theta ) when meshgrid of (theta, tauf)
+            thetapts, taufpts = np.meshgrid( self.thetas, self.taufs[:ibmax+1] )
             thetapts = np.ravel( thetapts )
-            betapts  = np.ravel( betapts )
-            points   = np.vstack(( thetapts, betapts )).T
+            taufpts  = np.ravel( taufpts )
+            points   = np.vstack(( thetapts, taufpts )).T
             
-            # Creates grid of desired theta and beta values and regrids
-            #   Again, thetagrid and betagrid have shape ( 1001, 36 )
+            # Creates grid of desired theta and tauf values and regrids
+            #   Again, thetagrid and taufgrid have shape ( 1001, 36 )
             thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
             
             # Creates grid of desired total optical depths (in requested scale) and regrids. 
             if tau_scale == 'log':
-                betagoal = np.logspace( log10(self.betas[0]), log10(betamax), 1001)
+                taufgoal = np.logspace( log10(self.taufs[0]), log10(taufmax), 1001)
             else:
-                betagoal = np.linspace( self.betas[0], betamax, 1001)
+                taufgoal = np.linspace( self.taufs[0], taufmax, 1001)
             
             # Creates grids of each value
-            thetagrid, betagrid = np.meshgrid( thetagoal, betagoal )
+            thetagrid, taufgrid = np.meshgrid( thetagoal, taufgoal )
             
             # Re-grids data array with desired interpolation
-            # Resulting zs has shape ( Nthetagoal, Nbetagoal ), like thetagrid and betagrid
-            zs = griddata( points, temparray, (thetagrid, betagrid), method=interp)
+            # Resulting zs has shape ( Nthetagoal, Ntaufgoal ), like thetagrid and taufgrid
+            zs = griddata( points, temparray, (thetagrid, taufgrid), method=interp)
             
             
             
@@ -7417,7 +7688,7 @@ class maser_v_theta(_maser_base_):
             if verbose:
                 print('Plotting figure...')
             
-            # zs shape is (betagoal, thetagoal). no freq edge effects
+            # zs shape is (taufgoal, thetagoal). no freq edge effects
             vmax = np.nanmax(np.abs( zs ))
             if plotvalue == 'evpa':
                 vmin = 0.0
@@ -7444,19 +7715,19 @@ class maser_v_theta(_maser_base_):
             # Plots image
             if tau_scale == 'log':
                 # Get correct bin ends on y-scale
-                dy = log10(betagoal[1]/betagoal[0])
+                dy = log10(taufgoal[1]/taufgoal[0])
                 #print('dy = {0}'.format(dy))
                 theta_plot = np.linspace( thetagoal[0]-dtheta/2., thetagoal[-1]+dtheta/2., thetagoal.size+1)
-                beta_plot  = np.logspace( log10(self.betas[0]) - dy/2. , log10(betamax) + dy/2., betagoal.size+1 )
+                tauf_plot  = np.logspace( log10(self.taufs[0]) - dy/2. , log10(taufmax) + dy/2., taufgoal.size+1 )
                 #print('theta_plot from {0} to {1}'.format(theta_plot[0], theta_plot[-1]))
-                #print('beta_plot from {0} to {1}'.format(beta_plot[0], beta_plot[-1]))
-                im = ax.pcolormesh( theta_plot, beta_plot, zs, vmin = vmin, vmax = vmax, cmap = cmap )
+                #print('tauf_plot from {0} to {1}'.format(tauf_plot[0], tauf_plot[-1]))
+                im = ax.pcolormesh( theta_plot, tauf_plot, zs, vmin = vmin, vmax = vmax, cmap = cmap )
                 ax.set_yscale( 'log' )
             else:
-                dbeta  = betagoal[1]  - betagoal[0]
+                dtauf  = taufgoal[1]  - taufgoal[0]
                 im = ax.imshow( zs, aspect='auto', origin='lower', vmin = vmin, vmax = vmax, cmap = cmap, \
                                 extent = [thetagoal[0] - dtheta/2., thetagoal[-1] + dtheta/2., \
-                                betagoal[0] - dbeta/2., betagoal[-1] + dbeta/2.] )
+                                taufgoal[0] - dtauf/2., taufgoal[-1] + dtauf/2.] )
             
             
         
@@ -7467,25 +7738,25 @@ class maser_v_theta(_maser_base_):
                 if cmap == 'RdBu':
                     #print(levels)
                     contour_color[ levels.index(0.0) ] = 'lightgray'
-                _cs2 = ax.contour( thetagrid, betagrid, zs, levels=levels, origin='lower', colors=contour_color )
+                _cs2 = ax.contour( thetagrid, taufgrid, zs, levels=levels, origin='lower', colors=contour_color )
             
             # If making contours for evpa plot, central contour will need to be darker
             elif contours:
                 levels_degrees = [ 30, 60, 90, 120, 150 ]
                 levels = [ float(x) * pi / 180. for x in levels_degrees ]
-                _cs2 = ax.contour( thetagrid, betagrid, zs, levels=levels, origin='lower', \
+                _cs2 = ax.contour( thetagrid, taufgrid, zs, levels=levels, origin='lower', \
                     colors=['w','w','lightgray','w','w'] )
             
             # Axis limits
             ax.set_xlim( self.thetas.min(), self.thetas.max() )
-            ax.set_ylim( self.betas[0], plotbetamax )
+            ax.set_ylim( self.taufs[0], plottaufmax )
             
             # Axis labels; x-axis label depends on theta units
             if self.units in ['degrees','deg','d']:
                 ax.set_xlabel(r'$\theta$ [$^{\circ}$]')
             else:
                 ax.set_xlabel(r'$\theta$ [radians]')
-            ax.set_ylabel(r'Total $\tau$')
+            ax.set_ylabel(r'Total $\tau_f$')
             
             # Makes colorbar; will have ticks at overplotted contour lines, if contours requested
             if interp is not None:
@@ -7618,14 +7889,14 @@ class maser_v_theta(_maser_base_):
             else:
                 P.close()
     
-    def plot_mlmc( self, freqoff, beta = None, label = None, label_loc = 'left', legend_cols = 1, \
+    def plot_mlmc( self, freqoff, tauf = None, label = None, label_loc = 'left', legend_cols = 1, \
                         figname = None, show = True ):
         """
         Plots ml (top) and mc (bottom) vs. cos(theta) at some offset frequency from the line center 
-        (freqoff) for a selection of optical depths (beta) in two vertical subplots.
+        (freqoff) for a selection of optical depths (tauf) in two vertical subplots.
         
         Intended to be run *after* stokes at a given point in cloud have been calculated or read in for a range  
-        of beta values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
+        of tauf values with cloud_end_stokes or read_cloud_end_stokes method, respectively.
         
         Required Parameters:
             
@@ -7636,10 +7907,10 @@ class maser_v_theta(_maser_base_):
             
         Optional Parameters:
             
-            beta            None, Float, or List of Floats 
+            tauf            None, Float, or List of Floats 
                                 [ Default = None ]
                                 The values or values of total optical depth to be plotted. If None, plots all
-                                values of beta in self.betas object attribute
+                                values of tauf in self.taufs object attribute
                         
             label          None or String
                                 [ Default = None ]
@@ -7693,17 +7964,17 @@ class maser_v_theta(_maser_base_):
         attr_missing_msg1 = method_name + ': Object attribute {0} does not exist.'
         attr_missing_msg2 = method_name + ': Object attribute {0} does not exist for maser object with theta = {1} {2}.'
         attr_shape_msg    = method_name + ': Shape of object attribute {0} for maser object with theta = {1} {2}\n' + \
-                        ' '*(12+len(method_name)+2) + 'is not consistent with attributes betas, omegabar, and k.\n' + \
+                        ' '*(12+len(method_name)+2) + 'is not consistent with attributes taufs, omegabar, and k.\n' + \
                         ' '*(12+len(method_name)+2) + 'Attribute {0} should be NumPy array of shape ( {3}, {4} ).'
         
         # Iterates through required keywords to make sure the attributes exist; checks top level object first
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in self.__dict__.keys():
                 raise AttributeError( attr_missing_msg1.format(req_attr) )
             
-        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the attribute 
+        # Since taufs attribute must exist if we made it here, figures out the expected dimensions of the attribute 
         #   arrays
-        Nbetas = self.betas.size
+        Ntaufs = self.taufs.size
         Nfreq  = self.omegabar.size - 2 * self.k
         
         # Then checks maser objects in masers dictionary
@@ -7717,35 +7988,35 @@ class maser_v_theta(_maser_base_):
                 
                 # If it does exist and it's not tau_idx, makes sure that the array shape is correct
                 elif req_att != 'tau_idx':
-                    if self.masers[theta].__dict__[req_att].shape != ( Nbetas, Nfreq ):
-                        raise ValueError( attr_shape_msg.format(req_att, theta, self.units, Nbetas, Nfreq) )
+                    if self.masers[theta].__dict__[req_att].shape != ( Ntaufs, Nfreq ):
+                        raise ValueError( attr_shape_msg.format(req_att, theta, self.units, Ntaufs, Nfreq) )
         
         
         
         
-        #### Does some processing on requested beta value ####
+        #### Does some processing on requested tauf value ####
         
-        # If none is provided, assume all beta values in betas attribute are desired
-        if beta is None:
-            beta = list( self.betas )
-            beta_idxs = list( np.arange( len(beta) ) )
+        # If none is provided, assume all tauf values in taufs attribute are desired
+        if tauf is None:
+            tauf = list( self.taufs )
+            tauf_idxs = list( np.arange( len(tauf) ) )
         else:
         
-            # If beta provided is single value, not list, makes it into len-1 list
-            if isinstance( beta, float ) or isinstance( beta, int ):
-                beta = [ float(beta) ]
+            # If tauf provided is single value, not list, makes it into len-1 list
+            if isinstance( tauf, float ) or isinstance( tauf, int ):
+                tauf = [ float(tauf) ]
             
-            # Determines indices for each beta value in betas object attribute
-            beta_idxs = []
-            for bval in beta:
-                if float(bval) in self.betas:
-                    beta_idxs.append( np.where( self.betas == float(bval) )[0][0] )
+            # Determines indices for each tauf value in taufs object attribute
+            tauf_idxs = []
+            for bval in tauf:
+                if float(bval) in self.taufs:
+                    tauf_idxs.append( np.where( self.taufs == float(bval) )[0][0] )
                 else:
-                    err_msg = '{0}: Requested beta value, {1}, not in betas object attribute.\n'.format(method_name, bval) + \
+                    err_msg = '{0}: Requested tauf value, {1}, not in taufs object attribute.\n'.format(method_name, bval) + \
                               ' '*(12+len(method_name)+2) + \
                               'Please make sure that cloud_end_stokes attributes have been generated or read for\n' + \
                               ' '*(12+len(method_name)+2) + \
-                              '    the desired beta values before calling this method.'
+                              '    the desired tauf values before calling this method.'
                     raise ValueError(err_msg)
         
         
@@ -7753,20 +8024,20 @@ class maser_v_theta(_maser_base_):
         
         #### Determine the colors and markers ####
         
-        if len( beta ) <= 7:
-            color_list  = color_sets[ 7][:len(beta)]
-            marker_list = marker_sets[7][:len(beta)]
-            fill_list = [ 'full', ] * len(beta)
-        elif len(beta) in [8,9]:
-            color_list  = color_sets[ len(beta)]
-            marker_list = marker_sets[len(beta)]
-            fill_list = [ 'full', ] * len(beta)
+        if len( tauf ) <= 7:
+            color_list  = color_sets[ 7][:len(tauf)]
+            marker_list = marker_sets[7][:len(tauf)]
+            fill_list = [ 'full', ] * len(tauf)
+        elif len(tauf) in [8,9]:
+            color_list  = color_sets[ len(tauf)]
+            marker_list = marker_sets[len(tauf)]
+            fill_list = [ 'full', ] * len(tauf)
         else:
-            color_list  = list( islice( cycle( color_sets[ 8] ), len(beta) ))
-            marker_list = list( islice( cycle( marker_sets[9] ), len(beta) ))
+            color_list  = list( islice( cycle( color_sets[ 8] ), len(tauf) ))
+            marker_list = list( islice( cycle( marker_sets[9] ), len(tauf) ))
             fill_template = [ 'full', ]*8
             fill_template.extend( ['none',]*8 )
-            fill_list   = list( islice( cycle( fill_template ), len(beta) ))
+            fill_list   = list( islice( cycle( fill_template ), len(tauf) ))
         
         
         
@@ -7804,14 +8075,14 @@ class maser_v_theta(_maser_base_):
         fig.subplots_adjust( hspace=0, left=0.15,bottom=0.13,right=0.95,top=0.91 )
         
         # Begins iterating through the number of optical depths specified for plotting
-        for i, bval in enumerate(beta):
+        for i, bval in enumerate(tauf):
             
             # Gets the index that corresponds to this total optical depth in the stacked arrays
-            beta_idx = beta_idxs[i]
+            tauf_idx = tauf_idxs[i]
             
             # Makes the lists of line center ml and mc values to plot
-            plot_ml = [ self.masers[theta].stacked_ml[ beta_idx , jcenter + freqoff ] for theta in self.thetas ]
-            plot_mc = [ self.masers[theta].stacked_mc[ beta_idx , jcenter + freqoff ] for theta in self.thetas ]
+            plot_ml = [ self.masers[theta].stacked_ml[ tauf_idx , jcenter + freqoff ] for theta in self.thetas ]
+            plot_mc = [ self.masers[theta].stacked_mc[ tauf_idx , jcenter + freqoff ] for theta in self.thetas ]
             
             # Actually plots with corresponding color/marker/fill
             ax[0].plot( costheta, plot_ml, marker = marker_list[i], \
@@ -7891,7 +8162,7 @@ class maser_v_theta(_maser_base_):
         else:
             P.close()
         
-    def plot_R( self, R_beta_theta, norm = False, aslog = False, betamax = None, plotbetamax = None, \
+    def plot_R( self, R_tauf_theta, norm = False, aslog = False, taufmax = None, plottaufmax = None, \
                         interp = 'cubic', fig_title = None, figname = None, show = True, verbose = True ):
         """
         Plots provided stimulated emission rate, R, vs. theta (x-axis) and total optical depth (y-axis).
@@ -7901,11 +8172,11 @@ class maser_v_theta(_maser_base_):
         
         Required Parameters:
             
-            R_beta_theta    2D NumPy Array
+            R_tauf_theta    2D NumPy Array
                                 The stimulated emission rate, in inverse seconds, at the cloud end.
-                                2-dimensional array with shape ( number_of_beta, number_of_theta ).
+                                2-dimensional array with shape ( number_of_tauf, number_of_theta ).
                                 Calculated R in each dimension should correspond to the object 
-                                attributes, betas and thetas.
+                                attributes, taufs and thetas.
             
         Optional Parameters:
             
@@ -7925,16 +8196,16 @@ class maser_v_theta(_maser_base_):
                                 If True, will plot the base-10 log of R (normalized first by any 
                                 value indicated with keyword, norm).
             
-            betamax         None or Float 
+            taufmax         None or Float 
                                 [ Default = None ]
-                                Maximum value of beta to show data for in the plot. If None, plots 
+                                Maximum value of tauf to show data for in the plot. If None, plots 
                                 all available data.
                                 
-            plotbetamax     Float or None
+            plottaufmax     Float or None
                                 [ Default = None ]
                                 Y-limit (optical depth) shown on the plot axes. If None, will be the 
-                                same as betamax. (Only useful if you want to set the y-limit used by
-                                the figure to be the same as other figures despite not having beta up 
+                                same as taufmax. (Only useful if you want to set the y-limit used by
+                                the figure to be the same as other figures despite not having tauf up 
                                 to that value for this parameter set.)
                                 
             interp          String
@@ -7972,28 +8243,28 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Processing defaults for betamax and plotbetamax ####
+        #### Processing defaults for taufmax and plottaufmax ####
         
-        # Finds index of maximum beta present for all ml arrays
-        if betamax is not None:
+        # Finds index of maximum tauf present for all ml arrays
+        if taufmax is not None:
         
-            # Finds index of betamax in betas array
-            if betamax in self.betas:
-                ibmax = np.where( self.betas == betamax )[0][0]
-                Nbetas = ibmax + 1
+            # Finds index of taufmax in taufs array
+            if taufmax in self.taufs:
+                ibmax = np.where( self.taufs == taufmax )[0][0]
+                Ntaufs = ibmax + 1
             else:
-                err_msg = method_name + ": Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
+                err_msg = method_name + ": Requested tauf value, {0}, not in taufs attribute array.\n".format(taufmax) 
                 raise ValueError(err_msg)
         
-        # If using default betamax, just uses last one with stokes for all theta values present
+        # If using default taufmax, just uses last one with stokes for all theta values present
         else:
-            Nbetas = self.betas.size
-            ibmax = Nbetas - 1
-            betamax = self.betas[ibmax]
+            Ntaufs = self.taufs.size
+            ibmax = Ntaufs - 1
+            taufmax = self.taufs[ibmax]
         
-        # Sets default plotbetamax, if not set
-        if plotbetamax is None:
-            plotbetamax = betamax
+        # Sets default plottaufmax, if not set
+        if plottaufmax is None:
+            plottaufmax = taufmax
         
         
         
@@ -8007,39 +8278,39 @@ class maser_v_theta(_maser_base_):
                       "figure produced. Please either set show = True or provide a figname for the plot."
             raise ValueError(err_msg)
         
-        # Checks if betas attribute exists; thetas must unless deleted since it's created by the init
-        if 'betas' not in self.__dict__.keys():
+        # Checks if taufs attribute exists; thetas must unless deleted since it's created by the init
+        if 'taufs' not in self.__dict__.keys():
             attr_missing_msg  = method_name + ': Object attribute {0} does not exist.'
             raise AttributeError( attr_missing_msg.format(req_attr) )
             
-        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the 
-        #    R_beta_theta array
+        # Since taufs attribute must exist if we made it here, figures out the expected dimensions of the 
+        #    R_tauf_theta array
         Nthetas = self.thetas.size
-        Nbetas  = self.betas.size
+        Ntaufs  = self.taufs.size
         
-        # Checks that the R_beta_theta is a Numpy Array
-        if not isinstance( R_beta_theta, np.ndarray ):
-            R_type_msg = method_name + ': R_beta_theta must be a NumPy array.'
+        # Checks that the R_tauf_theta is a Numpy Array
+        if not isinstance( R_tauf_theta, np.ndarray ):
+            R_type_msg = method_name + ': R_tauf_theta must be a NumPy array.'
             raise TypeError( R_type_msg )
         
         # If it is a numpy array, makes sure it's 2-dimensional
-        elif R_beta_theta.ndim != 2:
-            R_type_msg = method_name + ': R_beta_theta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
-            raise ValueError( R_type_msg.format( R_beta_theta.ndim ) )
+        elif R_tauf_theta.ndim != 2:
+            R_type_msg = method_name + ': R_tauf_theta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
+            raise ValueError( R_type_msg.format( R_tauf_theta.ndim ) )
         
-        # If it is 2-dimensional, checks the axis sizes, starting with the beta axis
-        elif R_beta_theta.shape[0] != Nbetas:
-            R_shape_beta_msg  = method_name + ': Shape of R_beta_theta is not consistent with betas object attribute.\n' + \
+        # If it is 2-dimensional, checks the axis sizes, starting with the tauf axis
+        elif R_tauf_theta.shape[0] != Ntaufs:
+            R_shape_tauf_msg  = method_name + ': Shape of R_tauf_theta is not consistent with taufs object attribute.\n' + \
                                 ' '*(12+len(method_name)+2) + \
-                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
-            raise ValueError( R_shape_beta_msg.format( Nbetas, Nthetas, *R_beta_theta.shape ) )
+                                'R_tauf_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_tauf_msg.format( Ntaufs, Nthetas, *R_tauf_theta.shape ) )
         
         # then checks theta axis
-        elif R_beta_theta.shape[1] != Nthetas:
-            R_shape_theta_msg = method_name + ': Shape of R_beta_theta is not consistent with thetas object attribute.\n' + \
+        elif R_tauf_theta.shape[1] != Nthetas:
+            R_shape_theta_msg = method_name + ': Shape of R_tauf_theta is not consistent with thetas object attribute.\n' + \
                                 ' '*(12+len(method_name)+2) + \
-                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
-            raise ValueError( R_shape_theta_msg.format(  Nbetas, Nthetas,*R_beta_theta.shape ) )
+                                'R_tauf_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_theta_msg.format(  Ntaufs, Nthetas,*R_tauf_theta.shape ) )
         
         
         # Checks that value provided for norm is accepted
@@ -8077,8 +8348,8 @@ class maser_v_theta(_maser_base_):
         # First, does it if there's no normalization
         if not norm:
             
-            # Array to plot is just R_beta_theta
-            temparray = R_beta_theta
+            # Array to plot is just R_tauf_theta
+            temparray = R_tauf_theta
             
             # Sets aside the name of what we're plotting for the title and its units
             plotvalue = 'R'
@@ -8091,8 +8362,8 @@ class maser_v_theta(_maser_base_):
             # Calculates gOmega and converts from angular frequency to frequency
             gOmega = float(self.k) * float( self.omegabar[1]-self.omegabar[0] )  / pi 
             
-            # Array to plot is R_beta_theta divided by that value
-            temparray = R_beta_theta / gOmega
+            # Array to plot is R_tauf_theta divided by that value
+            temparray = R_tauf_theta / gOmega
             
             # Sets aside the name of what we're plotting for the title and its units
             plotvalue = r'R/g$\Omega$'
@@ -8102,8 +8373,8 @@ class maser_v_theta(_maser_base_):
         # Finally, if a value is provided for norm, assume's it's Gamma in inverse seconds
         else:
             
-            # Array to plot is R_beta_theta divided by that value
-            temparray = R_beta_theta / norm
+            # Array to plot is R_tauf_theta divided by that value
+            temparray = R_tauf_theta / norm
             
             # Sets aside the name of what we're plotting for the title and its units
             plotvalue = r'R/$\Gamma$'
@@ -8144,7 +8415,7 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Regridding array for smooth distribution of theta and beta solutions ####
+        #### Regridding array for smooth distribution of theta and tauf solutions ####
         
         if temparray.size != 0:
             
@@ -8152,29 +8423,29 @@ class maser_v_theta(_maser_base_):
                 print('Regridding data...')
             
             # Ravels temparray to prepare for regridding
-            # Before ravel, has shape (beta, theta)
+            # Before ravel, has shape (tauf, theta)
             temparray = np.ravel( temparray )
         
-            # Creates grid of existing (theta, beta) points
-            # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
-            thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+            # Creates grid of existing (theta, tauf) points
+            # Resulting arrays have shape ( tauf, theta ) when meshgrid of (theta, tauf)
+            thetapts, taufpts = np.meshgrid( self.thetas, self.taufs[:ibmax+1] )
             thetapts = np.ravel( thetapts )
-            betapts  = np.ravel( betapts )
-            points   = np.vstack(( thetapts, betapts )).T
+            taufpts  = np.ravel( taufpts )
+            points   = np.vstack(( thetapts, taufpts )).T
             
-            # Creates grid of desired theta and beta values and regrids
-            #   Again, thetagrid and betagrid have shape ( 1001, 36 )
+            # Creates grid of desired theta and tauf values and regrids
+            #   Again, thetagrid and taufgrid have shape ( 1001, 36 )
             thetagoal = np.linspace( self.thetas.min(), self.thetas.max(), num=36 )
-            betagoal  = np.linspace( self.betas[0], betamax, 1001)
-            thetagrid, betagrid = np.meshgrid( thetagoal, betagoal )
+            taufgoal  = np.linspace( self.taufs[0], taufmax, 1001)
+            thetagrid, taufgrid = np.meshgrid( thetagoal, taufgoal )
             
             # Sets aside resolution of each for later use
             dtheta = thetagoal[1] - thetagoal[0]
-            dbeta  = betagoal[1]  - betagoal[0]
+            dtauf  = taufgoal[1]  - taufgoal[0]
             
             # Re-grids data array with desired interpolation
-            # Resulting zs has shape ( Nthetagoal, Nbetagoal ), like thetagrid and betagrid
-            zs = griddata( points, temparray, (thetagrid, betagrid), method=interp)
+            # Resulting zs has shape ( Nthetagoal, Ntaufgoal ), like thetagrid and taufgrid
+            zs = griddata( points, temparray, (thetagrid, taufgrid), method=interp)
             
             
             
@@ -8191,18 +8462,18 @@ class maser_v_theta(_maser_base_):
             P.close()
             P.imshow( zs, aspect='auto', origin='lower', cmap = cmap, \
                       extent = [self.thetas.min() - dtheta/2., self.thetas.max() + dtheta/2., \
-                      self.betas[0] - dbeta/2., betamax + dbeta/2.] )
+                      self.taufs[0] - dtauf/2., taufmax + dtauf/2.] )
             
             # Axis limits
             P.xlim( self.thetas.min(), self.thetas.max() )
-            P.ylim( self.betas[0], plotbetamax )
+            P.ylim( self.taufs[0], plottaufmax )
             
             # Axis labels; x-axis label depends on theta units
             if self.units in ['degrees','deg','d']:
                 P.xlabel(r'$\theta$ [$^{\circ}$]')
             else:
                 P.xlabel(r'$\theta$ [radians]')
-            P.ylabel(r'Total $\tau$')
+            P.ylabel(r'Total $\tau_f$')
             
             # Colorbar
             cbar = P.colorbar()
@@ -8235,15 +8506,17 @@ class maser_v_theta(_maser_base_):
             else:
                 P.close()
     
-    def plot_theta_logR( self, plotvalue,  R_beta_theta, freqoff = 0, betamax = None, ylims = None, contours = False, \
-                        convert_freq = True, interp = 'cubic', subtitle = None, figname = None, show = True, verbose = True ):
+    def plot_theta_logR( self, plotvalue,  R_tauf_theta, freqoff = 0, taufmax = None, ylims = None, contours = False, \
+                        convert_freq = True, interp = 'cubic', summed = False, subtitle = None, \
+                        figname = None, show = True, verbose = True ):
         """
         Plots desired value at some offset from line center vs. theta (x-axis) and log(R/gOmega) (y-axis).
         
-        Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), or fracu (stoku/stoki).
+        Can be used to plot mc, ml, evpa, stoki, stokq, stoku, stokv, fracq (stokq/stoki), fracu (stoku/stoki), 
+        quv (sqrt(q^2+u^2)/i-v/i), mlmc (ml-mc), or vmetric ( Vmax - Vmin ) / Imax.
         
-        Intended to be run *after* stokes at a given point in cloud have been read in for a range of beta values
-        with cloud_end_stokes method AND using R_beta_theta array calculated with calc_R method.
+        Intended to be run *after* stokes at a given point in cloud have been read in for a range of tauf values
+        with cloud_end_stokes method AND using R_tauf_theta array calculated with calc_R method.
         
         Required Parameters:
             
@@ -8253,10 +8526,10 @@ class maser_v_theta(_maser_base_):
                                 'mlmc' for (ml-mc), or 'vmetric' for ( Vmax - Vmin ) / Imax.
                                 Note: 'vmetric' plotvalue only available for freqoff = None. 
             
-            R_beta_theta    2D NumPy Array
+            R_tauf_theta    2D NumPy Array
                                 The stimulated emission rate, in inverse seconds, at the cloud end. 2-dimensional 
-                                array with shape ( number_of_beta, number_of_theta ). Calculated R in each 
-                                dimension should correspond to the object attributes, betas and thetas.
+                                array with shape ( number_of_tauf, number_of_theta ). Calculated R in each 
+                                dimension should correspond to the object attributes, taufs and thetas.
             
         Optional Parameters:
             
@@ -8270,9 +8543,9 @@ class maser_v_theta(_maser_base_):
                                 angular frequency for each theta and log(R/gOmega). 
                                 NOTE: None is NOT the same as 0!!!
             
-            betamax         None or Float 
+            taufmax         None or Float 
                                 [ Default = None ]
-                                Maximum value of beta to show data for in the plot. If None, plots all available 
+                                Maximum value of tauf to show data for in the plot. If None, plots all available 
                                 data.
                                 
             ylims           Length-2 tuple/List or None
@@ -8287,7 +8560,7 @@ class maser_v_theta(_maser_base_):
             convert_freq    Boolean 
                                 [ Default = True ]
                                 Whether to convert omegabar from angular frequency (s^-1) to frequency (MHz) 
-                                (if True) or not (if False).
+                                (if True) or not (if False). Only used for labelling frequency plotted.
                                 
             interp          String
                                 [ Default = 'cubic' ]
@@ -8295,6 +8568,12 @@ class maser_v_theta(_maser_base_):
                                 options are 'linear' and 'nearest'. 
                                 Note: 'nearest' will not properly cut off interpolation past valid range of 
                                 log(R/gOmega) values. Not recommended.
+                                
+            summed          Boolean
+                                [ Default = False ]
+                                Whether the R provided is summed over all n (True) or only calculated at line
+                                center (False). Only affects the y-axis label; if summed is False, R will 
+                                appear as R_0.
                                 
             subtitle        None or String 
                                 [ Default = None ]
@@ -8324,24 +8603,24 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Processing default for betamax ####
+        #### Processing default for taufmax ####
         
-        # Finds index of maximum beta present for all ml arrays
-        if betamax is not None:
+        # Finds index of maximum tauf present for all ml arrays
+        if taufmax is not None:
         
-            # Finds index of betamax in betas array
-            if betamax in self.betas:
-                ibmax = np.where( self.betas == betamax )[0][0]
-                Nbetas = ibmax + 1
+            # Finds index of taufmax in taufs array
+            if taufmax in self.taufs:
+                ibmax = np.where( self.taufs == taufmax )[0][0]
+                Ntaufs = ibmax + 1
             else:
-                err_msg = method_name + ": Requested beta value, {0}, not in betas attribute array.\n".format(betamax) 
+                err_msg = method_name + ": Requested tauf value, {0}, not in taufs attribute array.\n".format(taufmax) 
                 raise ValueError(err_msg)
         
-        # If using default betamax, just uses last one with stokes for all theta values present
-        elif betamax is None:
-            Nbetas = self.betas.size
-            ibmax = Nbetas - 1
-            betamax = self.betas[ibmax]
+        # If using default taufmax, just uses last one with stokes for all theta values present
+        elif taufmax is None:
+            Ntaufs = self.taufs.size
+            ibmax = Ntaufs - 1
+            taufmax = self.taufs[ibmax]
             
             
             
@@ -8367,11 +8646,11 @@ class maser_v_theta(_maser_base_):
                      ' '*(12+len(method_name)+2) + 'Should be 2D NumPy array with {3} values along 0-axis (currently {4}).'
         
         # Iterates through required keywords to make sure the attributes exist; checks top level object first
-        for req_attr in ['tau_idx', 'betas']:
+        for req_attr in ['tau_idx', 'taufs']:
             if req_attr not in self.__dict__.keys():
                 raise AttributeError( attr_missing_msg1.format(req_attr) )
             
-        # Since betas attribute must exist if we made it here, figures out the expected dimensions of the attribute 
+        # Since taufs attribute must exist if we made it here, figures out the expected dimensions of the attribute 
         #   arrays
         Nfreq  = self.omegabar.size - 2 * self.k
         Nthetas = self.thetas.size
@@ -8397,25 +8676,25 @@ class maser_v_theta(_maser_base_):
                     elif self.masers[theta].__dict__[req_att].shape[1] != Nfreq:
                         raise AttributeError( attr_dim0_msg.format(req_att, theta, self.units, Nfreq, self.masers[theta].__dict__[req_att].shape[0] ) )
             
-            # Checks size of 0th (beta) axis of those attribute arrays for every theta value
+            # Checks size of 0th (tauf) axis of those attribute arrays for every theta value
             if req_att != 'tau_idx':
-                Nbeta_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
+                Ntauf_per_theta = np.array([ self.masers[theta].__dict__[req_att].shape[0] for theta in self.thetas ])
             
-                # If not every maser object has the same number of betas (and this hasn't been done for a previous 
-                #   attribute), prints a warning and adjusts number of betas
-                if np.unique( Nbeta_per_theta ).size != 1 and Nbeta_per_theta.min() != Nbetas:
+                # If not every maser object has the same number of taufs (and this hasn't been done for a previous 
+                #   attribute), prints a warning and adjusts number of taufs
+                if np.unique( Ntauf_per_theta ).size != 1 and Ntauf_per_theta.min() != Ntaufs:
                     warn_msg = method_name + ' WARNING: Optical depths in object attribute {0} not consistent across theta.\n' + \
                                 ' '*(len(method_name)+10) + 'Highest value of optical depth present for all theta is {1}. ({2} values.)'
-                    print( warn_msg.format( req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                    Nbetas = Nbeta_per_theta.min()
+                    print( warn_msg.format( req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                    Ntaufs = Ntauf_per_theta.min()
         
-                # If every maser object does have the same number of betas but its less than that expected from Nbetas, 
-                #   prints a warning and adjusts number of betas
-                elif  Nbeta_per_theta.min() != Nbetas:
-                    warn_msg = method_name + ' WARNING: Optical depths in object attribute {0} not consistent with betas attribute.\n' + \
+                # If every maser object does have the same number of taufs but its less than that expected from Ntaufs, 
+                #   prints a warning and adjusts number of taufs
+                elif  Ntauf_per_theta.min() != Ntaufs:
+                    warn_msg = method_name + ' WARNING: Optical depths in object attribute {0} not consistent with taufs attribute.\n' + \
                                 ' '*(len(method_name)+10) + 'Highest value of optical depth present for all theta is {1}. ({2} values.)'
-                    print( warn_msg.format( req_att, self.betas[ Nbeta_per_theta.min() - 1 ], Nbeta_per_theta.min() ))
-                    Nbetas = Nbeta_per_theta.min()
+                    print( warn_msg.format( req_att, self.taufs[ Ntauf_per_theta.min() - 1 ], Ntauf_per_theta.min() ))
+                    Ntaufs = Ntauf_per_theta.min()
         
         # Makes sure that specified plotvalue is allowed:
         if plotvalue not in ['mc', 'ml', 'evpa', 'stoki', 'stokq', 'stoku', 'stokv', 'fracq', 'fracu', 'vmetric', 'quv', 'mlmc']:
@@ -8424,29 +8703,29 @@ class maser_v_theta(_maser_base_):
                         ' '*(12+len(method_name)+2) + "'stoku', 'stokv', 'fracq', or 'fracu'."
             raise ValueError(err_msg)
         
-        # Checks that the R_beta_theta is a Numpy Array
-        if not isinstance( R_beta_theta, np.ndarray ):
-            R_type_msg = method_name + ': R_beta_theta must be a NumPy array.'
+        # Checks that the R_tauf_theta is a Numpy Array
+        if not isinstance( R_tauf_theta, np.ndarray ):
+            R_type_msg = method_name + ': R_tauf_theta must be a NumPy array.'
             raise TypeError( R_type_msg )
         
         # If it is a numpy array, makes sure it's 2-dimensional
-        elif R_beta_theta.ndim != 2:
-            R_type_msg = method_name + ': R_beta_theta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
-            raise ValueError( R_type_msg.format( R_beta_theta.ndim ) )
+        elif R_tauf_theta.ndim != 2:
+            R_type_msg = method_name + ': R_tauf_theta must be a 2-dimensional NumPy Array. (Current dimensions: {0}).'
+            raise ValueError( R_type_msg.format( R_tauf_theta.ndim ) )
         
-        # If it is 2-dimensional, checks the axis sizes, starting with the beta axis
-        elif R_beta_theta.shape[0] != Nbetas:
-            R_shape_beta_msg  = method_name + ': Shape of R_beta_theta is not consistent with betas object attribute.\n' + \
+        # If it is 2-dimensional, checks the axis sizes, starting with the tauf axis
+        elif R_tauf_theta.shape[0] != Ntaufs:
+            R_shape_tauf_msg  = method_name + ': Shape of R_tauf_theta is not consistent with taufs object attribute.\n' + \
                                 ' '*(12+len(method_name)+2) + \
-                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
-            raise ValueError( R_shape_beta_msg.format( Nbetas, Nthetas, *R_beta_theta.shape ) )
+                                'R_tauf_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_tauf_msg.format( Ntaufs, Nthetas, *R_tauf_theta.shape ) )
         
         # then checks theta axis
-        elif R_beta_theta.shape[1] != Nthetas:
-            R_shape_theta_msg = method_name + ': Shape of R_beta_theta is not consistent with thetas object attribute.\n' + \
+        elif R_tauf_theta.shape[1] != Nthetas:
+            R_shape_theta_msg = method_name + ': Shape of R_tauf_theta is not consistent with thetas object attribute.\n' + \
                                 ' '*(12+len(method_name)+2) + \
-                                'R_beta_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
-            raise ValueError( R_shape_theta_msg.format(  Nbetas, Nthetas,*R_beta_theta.shape ) )
+                                'R_tauf_theta should be NumPy array of shape ( {0}, {1} ). (Current shape ( {2}, {3} ).)'
+            raise ValueError( R_shape_theta_msg.format(  Ntaufs, Nthetas,*R_tauf_theta.shape ) )
         
         # Checks format of provided ylims
         if ylims is not None:
@@ -8811,15 +9090,15 @@ class maser_v_theta(_maser_base_):
         
         
         
-        #### Regridding array for smooth distribution of theta and beta solutions ####
+        #### Regridding array for smooth distribution of theta and tauf solutions ####
         
         if temparray.size != 0:
             
             # Calculates gOmega
             gOmega = float(self.k) * float( self.omegabar[1]-self.omegabar[0] )  / pi 
             
-            # Calculates array of log(R/gOmega); should still have shape ( Nbeta, Ntheta )
-            logRpts = np.log10( R_beta_theta / gOmega )
+            # Calculates array of log(R/gOmega); should still have shape ( Ntauf, Ntheta )
+            logRpts = np.log10( R_tauf_theta / gOmega )
             
             
             if interp is not None:
@@ -8827,15 +9106,15 @@ class maser_v_theta(_maser_base_):
                     print('Regridding data...')
             
                 # Ravels temparray to prepare for regridding
-                # Before ravel, has shape (beta, theta)
+                # Before ravel, has shape (tauf, theta)
                 temparray = np.ravel( temparray )
         
-                # Creates grid of existing (theta, beta) points
-                # Resulting arrays have shape ( beta, theta ) when meshgrid of (theta, beta)
-                thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+                # Creates grid of existing (theta, tauf) points
+                # Resulting arrays have shape ( tauf, theta ) when meshgrid of (theta, tauf)
+                thetapts, taufpts = np.meshgrid( self.thetas, self.taufs[:ibmax+1] )
             
-                # Creates point locations, but instead of betapts values, want 
-                #   values of log10(R_theta_beta/gOmega)
+                # Creates point locations, but instead of taufpts values, want 
+                #   values of log10(R_theta_tauf/gOmega)
                 thetapts = np.ravel( thetapts )
                 logRpts  = np.ravel( logRpts )
                 points   = np.vstack(( thetapts, logRpts )).T
@@ -8867,7 +9146,7 @@ class maser_v_theta(_maser_base_):
                 if verbose:
                     print('Plotting figure...')
             
-                # zs shape is (betagoal, thetagoal). no freq edge effects
+                # zs shape is (taufgoal, thetagoal). no freq edge effects
                 vmax = np.nanmax(np.abs( zs ))
                 if plotvalue == 'evpa':
                     vmin = 0.0
@@ -8882,7 +9161,7 @@ class maser_v_theta(_maser_base_):
                 if verbose:
                     print('Plotting figure...')
             
-                # zs shape is (betagoal, thetagoal). no freq edge effects
+                # zs shape is (taufgoal, thetagoal). no freq edge effects
                 vmax = np.nanmax(np.abs( temparray ))
                 if plotvalue == 'evpa':
                     vmin = 0.0
@@ -8943,7 +9222,7 @@ class maser_v_theta(_maser_base_):
                     levels = [ float(x) * pi / 180. for x in levels_degrees ]
                 else:
                     levels = gen_contour_levels( vmin, vmax, min_contours = 4 )
-                thetapts, betapts = np.meshgrid( self.thetas, self.betas[:ibmax+1] )
+                thetapts, taufpts = np.meshgrid( self.thetas, self.taufs[:ibmax+1] )
                 _cs2 = ax.contour( thetapts, logRpts, temparray, levels=levels, origin='lower', cmap = 'viridis' )
                 
             
@@ -8959,7 +9238,11 @@ class maser_v_theta(_maser_base_):
                 ax.set_xlabel(r'$\theta$ [$^{\circ}$]')
             else:
                 ax.set_xlabel(r'$\theta$ [radians]')
-            ax.set_ylabel(r'log( $R/g\Omega$ )')
+            if summed:
+                ax.set_ylabel(r'log( $R/g\Omega$ )')
+            else:
+                ax.set_ylabel(r'log( $R_0/g\Omega$ )')
+            
             
             
             # Makes colorbar; will have ticks at overplotted contour lines, if contours requested
@@ -9028,7 +9311,6 @@ class maser_v_theta(_maser_base_):
             
                  # If frequency conversion to MHz is requested, converts and generates freq_string label
                 if convert_freq:
-            
                     # Converts from angular frequency to frequency & Creates label
                     dfreq = dfreq / (2.*pi)
                     midfreq = midfreq / (2.*pi)
