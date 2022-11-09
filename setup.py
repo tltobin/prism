@@ -31,7 +31,7 @@ long_description = read("README.md")
 setup(
     name="prism",
     version=get_version("VERSION"),
-    description="1D Maser Polarized Radiative Transfer Code with Faraday Rotation from GTK.",
+    description="1D Maser Polarized Radiative Transfer Code with Faraday Rotation from TGK.",
     long_description=long_description,
     url="https://github.com/tltobin/prism",
     
@@ -52,7 +52,7 @@ setup(
     
     # Use these lines to prevent installation without specific versions of python & required subpackages
     # python_requires=">=3.7, <4",
-    # install_requires=["peppercorn"],
+    install_requires=["numpy>=1.16","matplotlib","astropy","scipy"],
     
     # Can use this to install any additional data files that need to be installed with package
     # package_data={  # Optional
