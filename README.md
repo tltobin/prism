@@ -6,7 +6,9 @@ If you use this code, we request that you cite the corresponding article:
 
 > Tobin, Gray, & Kemball 2022 (in review)
 
-The version of this code cited in the above paper is v1.0.0.
+And cite this repository:
+
+- v1.0.0 (version used in above paper): [![DOI](https://zenodo.org/badge/476032047.svg)](https://zenodo.org/badge/latestdoi/476032047)
 
 ## System Requirements
 
