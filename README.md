@@ -4,11 +4,9 @@ PRISM (Polarized Radiation Intensity from Saturated Masers) is a package for cal
 ## Citations
 If you use this code, we request that you cite the corresponding article:
 
-> Tobin, Gray, & Kemball 2022 [add citation when published]
+> Tobin, Gray, & Kemball 2022 (in review)
 
-The DOI for the version of this code cited in the above paper (v 1.0.0) is:
-
-> DOI:[insert when set up]
+The version of this code cited in the above paper is v1.0.0.
 
 ## System Requirements
 
